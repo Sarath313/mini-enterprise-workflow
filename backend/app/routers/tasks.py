@@ -14,6 +14,7 @@ from app.schemas.task import (
     TaskResponse,
     TaskUpdate,
 )
+from app.utils.activity import create_task_activity
 
 
 router = APIRouter(
@@ -21,10 +22,6 @@ router = APIRouter(
     tags=["Tasks"],
 )
 
-
-# ============================================================
-# CREATE TASK
-# ============================================================
 
 @router.post(
     "/",
@@ -36,7 +33,6 @@ def create_task(
     current_user: User = Depends(require_manager_or_admin),
     db: Session = Depends(get_db),
 ):
-    # Validate assigned user
     if task_data.assigned_to is not None:
         assigned_user = (
             db.query(User)
@@ -60,16 +56,30 @@ def create_task(
     )
 
     db.add(new_task)
+    db.flush()
+
+    create_task_activity(
+        db=db,
+        task_id=new_task.id,
+        user_id=current_user.id,
+        action="created",
+        details=f"Task '{new_task.title}' was created",
+    )
+
+    if new_task.assigned_to is not None:
+        create_task_activity(
+            db=db,
+            task_id=new_task.id,
+            user_id=current_user.id,
+            action="assigned",
+            details=f"Task assigned to user ID {new_task.assigned_to}",
+        )
+
     db.commit()
     db.refresh(new_task)
 
     return new_task
 
-
-# ============================================================
-# GET ALL TASKS
-# With RBAC + filtering + pagination
-# ============================================================
 
 @router.get(
     "/",
@@ -84,20 +94,14 @@ def get_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Prevent invalid pagination values
     if skip < 0:
         skip = 0
 
     if limit < 1:
         limit = 20
 
-    # Maximum 100 tasks per request
     if limit > 100:
         limit = 100
-
-    # --------------------------------------------------------
-    # RBAC BASE QUERY
-    # --------------------------------------------------------
 
     if current_user.role == "admin":
         query = db.query(Task)
@@ -109,14 +113,9 @@ def get_tasks(
         )
 
     else:
-        # Employee can only see assigned tasks
         query = db.query(Task).filter(
             Task.assigned_to == current_user.id
         )
-
-    # --------------------------------------------------------
-    # OPTIONAL FILTERS
-    # --------------------------------------------------------
 
     if status is not None:
         query = query.filter(Task.status == status)
@@ -126,10 +125,6 @@ def get_tasks(
 
     if assigned_to is not None:
         query = query.filter(Task.assigned_to == assigned_to)
-
-    # --------------------------------------------------------
-    # PAGINATION
-    # --------------------------------------------------------
 
     tasks = (
         query
@@ -141,10 +136,6 @@ def get_tasks(
 
     return tasks
 
-
-# ============================================================
-# GET SINGLE TASK
-# ============================================================
 
 @router.get(
     "/{task_id}",
@@ -167,11 +158,9 @@ def get_task(
             detail="Task not found",
         )
 
-    # Admin can access every task
     if current_user.role == "admin":
         return task
 
-    # Manager can access tasks they created or are assigned to
     if current_user.role == "manager":
         if (
             task.created_by != current_user.id
@@ -184,7 +173,6 @@ def get_task(
 
         return task
 
-    # Employee can only access assigned tasks
     if task.assigned_to != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -193,10 +181,6 @@ def get_task(
 
     return task
 
-
-# ============================================================
-# UPDATE TASK
-# ============================================================
 
 @router.put(
     "/{task_id}",
@@ -220,16 +204,8 @@ def update_task(
             detail="Task not found",
         )
 
-    # --------------------------------------------------------
-    # ADMIN
-    # --------------------------------------------------------
-
     if current_user.role == "admin":
         pass
-
-    # --------------------------------------------------------
-    # MANAGER
-    # --------------------------------------------------------
 
     elif current_user.role == "manager":
         if (
@@ -241,10 +217,6 @@ def update_task(
                 detail="You do not have access to update this task",
             )
 
-    # --------------------------------------------------------
-    # EMPLOYEE
-    # --------------------------------------------------------
-
     else:
         if task.assigned_to != current_user.id:
             raise HTTPException(
@@ -252,14 +224,12 @@ def update_task(
                 detail="You can only update tasks assigned to you",
             )
 
-        # Employee must provide status
         if task_data.status is None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Employees can only update task status",
             )
 
-        # Employee cannot modify other fields
         if (
             task_data.title is not None
             or task_data.description is not None
@@ -271,10 +241,6 @@ def update_task(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Employees can only update task status",
             )
-
-    # --------------------------------------------------------
-    # VALIDATE ASSIGNED USER
-    # --------------------------------------------------------
 
     update_data = task_data.model_dump(
         exclude_unset=True
@@ -294,22 +260,71 @@ def update_task(
                     detail="Assigned user not found",
                 )
 
-    # --------------------------------------------------------
-    # APPLY UPDATE
-    # --------------------------------------------------------
+    old_status = task.status
+    old_assigned_to = task.assigned_to
 
     for field, value in update_data.items():
         setattr(task, field, value)
+
+    if "status" in update_data:
+        if old_status != task.status:
+            create_task_activity(
+                db=db,
+                task_id=task.id,
+                user_id=current_user.id,
+                action="status_changed",
+                details=(
+                    f"Status changed from '{old_status}' "
+                    f"to '{task.status}'"
+                ),
+            )
+
+    if "assigned_to" in update_data:
+        if old_assigned_to != task.assigned_to:
+            if task.assigned_to is None:
+                details = "Task assignment removed"
+            else:
+                details = (
+                    f"Task assigned to user ID "
+                    f"{task.assigned_to}"
+                )
+
+            create_task_activity(
+                db=db,
+                task_id=task.id,
+                user_id=current_user.id,
+                action="assigned",
+                details=details,
+            )
+
+    non_activity_fields = {
+        "status",
+        "assigned_to",
+    }
+
+    other_changes = [
+        field
+        for field in update_data
+        if field not in non_activity_fields
+    ]
+
+    if other_changes:
+        create_task_activity(
+            db=db,
+            task_id=task.id,
+            user_id=current_user.id,
+            action="updated",
+            details=(
+                "Updated fields: "
+                + ", ".join(other_changes)
+            ),
+        )
 
     db.commit()
     db.refresh(task)
 
     return task
 
-
-# ============================================================
-# DELETE TASK
-# ============================================================
 
 @router.delete(
     "/{task_id}",
@@ -332,11 +347,9 @@ def delete_task(
             detail="Task not found",
         )
 
-    # Admin can delete any task
     if current_user.role == "admin":
         pass
 
-    # Manager can delete tasks they created or are assigned to
     elif current_user.role == "manager":
         if (
             task.created_by != current_user.id
@@ -347,20 +360,26 @@ def delete_task(
                 detail="You do not have permission to delete this task",
             )
 
-    # Employee cannot delete tasks
     else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Employees cannot delete tasks",
         )
 
+    create_task_activity(
+        db=db,
+        task_id=task.id,
+        user_id=current_user.id,
+        action="deleted",
+        details=f"Task '{task.title}' was deleted",
+    )
+
+    db.flush()
+
     db.delete(task)
+
     db.commit()
 
-
-# ============================================================
-# ASSIGN TASK
-# ============================================================
 
 @router.patch(
     "/{task_id}/assign",
@@ -384,7 +403,6 @@ def assign_task(
             detail="Task not found",
         )
 
-    # Manager can only assign tasks they created
     if current_user.role == "manager":
         if task.created_by != current_user.id:
             raise HTTPException(
@@ -392,7 +410,6 @@ def assign_task(
                 detail="Managers can only assign tasks they created",
             )
 
-    # Validate assigned user
     assigned_user = (
         db.query(User)
         .filter(User.id == assignment.assigned_to)
@@ -405,7 +422,22 @@ def assign_task(
             detail="Assigned user not found",
         )
 
+    old_assigned_to = task.assigned_to
+
     task.assigned_to = assigned_user.id
+
+    if old_assigned_to != task.assigned_to:
+        create_task_activity(
+            db=db,
+            task_id=task.id,
+            user_id=current_user.id,
+            action="assigned",
+            details=(
+                f"Task assigned from user ID "
+                f"{old_assigned_to} to user ID "
+                f"{task.assigned_to}"
+            ),
+        )
 
     db.commit()
     db.refresh(task)

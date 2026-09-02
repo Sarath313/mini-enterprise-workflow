@@ -35,6 +35,7 @@ class TaskResponse(BaseModel):
     description: str | None
     status: TaskStatus
     priority: TaskPriority
+    due_date: datetime | None
     assigned_to: int | None
     created_by: int
     created_at: datetime
