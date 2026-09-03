@@ -11,18 +11,26 @@ function Tasks() {
   const [priorityFilter, setPriorityFilter] = useState("");
 
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState("medium");
+  const [status, setStatus] = useState("todo");
   const [dueDate, setDueDate] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [deletingTaskId, setDeletingTaskId] = useState(null);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  const canCreateTask =
+    user?.role === "admin" ||
+    user?.role === "manager";
 
   const fetchTasks = async () => {
     setLoading(true);
@@ -60,6 +68,7 @@ function Tasks() {
     setTitle("");
     setDescription("");
     setPriority("medium");
+    setStatus("todo");
     setDueDate("");
     setAssignedTo("");
   };
@@ -105,9 +114,115 @@ function Tasks() {
     }
   };
 
-  const canCreateTask =
-    user?.role === "admin" ||
-    user?.role === "manager";
+  const openEditForm = (task) => {
+    setEditingTask(task);
+
+    setTitle(task.title);
+    setDescription(task.description || "");
+    setPriority(task.priority);
+    setStatus(task.status);
+
+    if (task.due_date) {
+      setDueDate(task.due_date.substring(0, 10));
+    } else {
+      setDueDate("");
+    }
+
+    setAssignedTo(
+      task.assigned_to
+        ? String(task.assigned_to)
+        : ""
+    );
+
+    setError("");
+    setSuccess("");
+  };
+
+  const closeEditForm = () => {
+    setEditingTask(null);
+    resetForm();
+    setError("");
+  };
+
+  const handleUpdateTask = async (event) => {
+    event.preventDefault();
+
+    if (!editingTask) {
+      return;
+    }
+
+    setUpdating(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const taskData = {
+        title,
+        description: description || null,
+        status,
+        priority,
+        due_date: dueDate
+          ? `${dueDate}T23:59:59`
+          : null,
+        assigned_to: assignedTo
+          ? Number(assignedTo)
+          : null,
+      };
+
+      await api.put(
+        `/tasks/${editingTask.id}`,
+        taskData
+      );
+
+      setSuccess("Task updated successfully.");
+
+      closeEditForm();
+
+      await fetchTasks();
+    } catch (error) {
+      console.error("Update task error:", error);
+
+      if (error.response?.data?.detail) {
+        setError(error.response.data.detail);
+      } else {
+        setError("Unable to update task.");
+      }
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleDeleteTask = async (taskId) => {
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this task?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingTaskId(taskId);
+    setError("");
+    setSuccess("");
+
+    try {
+      await api.delete(`/tasks/${taskId}`);
+
+      setSuccess("Task deleted successfully.");
+
+      await fetchTasks();
+    } catch (error) {
+      console.error("Delete task error:", error);
+
+      if (error.response?.data?.detail) {
+        setError(error.response.data.detail);
+      } else {
+        setError("Unable to delete task.");
+      }
+    } finally {
+      setDeletingTaskId(null);
+    }
+  };
 
   return (
     <div className="p-6">
@@ -130,6 +245,8 @@ function Tasks() {
             type="button"
             onClick={() => {
               setShowCreateForm(true);
+              setEditingTask(null);
+              resetForm();
               setError("");
               setSuccess("");
             }}
@@ -138,6 +255,7 @@ function Tasks() {
             + Create Task
           </button>
         )}
+
       </div>
 
       {/* Success Message */}
@@ -159,6 +277,7 @@ function Tasks() {
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
 
           <div className="mb-6 flex items-center justify-between">
+
             <div>
               <h2 className="text-xl font-semibold text-slate-900">
                 Create New Task
@@ -173,12 +292,14 @@ function Tasks() {
               type="button"
               onClick={() => {
                 setShowCreateForm(false);
+                resetForm();
                 setError("");
               }}
               className="text-sm font-medium text-slate-500 hover:text-slate-900"
             >
               Cancel
             </button>
+
           </div>
 
           <form
@@ -189,14 +310,14 @@ function Tasks() {
             {/* Title */}
             <div>
               <label
-                htmlFor="title"
+                htmlFor="create-title"
                 className="mb-2 block text-sm font-medium text-slate-700"
               >
                 Title
               </label>
 
               <input
-                id="title"
+                id="create-title"
                 type="text"
                 value={title}
                 onChange={(event) =>
@@ -212,14 +333,14 @@ function Tasks() {
             {/* Description */}
             <div>
               <label
-                htmlFor="description"
+                htmlFor="create-description"
                 className="mb-2 block text-sm font-medium text-slate-700"
               >
                 Description
               </label>
 
               <textarea
-                id="description"
+                id="create-description"
                 value={description}
                 onChange={(event) =>
                   setDescription(event.target.value)
@@ -235,14 +356,14 @@ function Tasks() {
 
               <div>
                 <label
-                  htmlFor="priority"
+                  htmlFor="create-priority"
                   className="mb-2 block text-sm font-medium text-slate-700"
                 >
                   Priority
                 </label>
 
                 <select
-                  id="priority"
+                  id="create-priority"
                   value={priority}
                   onChange={(event) =>
                     setPriority(event.target.value)
@@ -265,14 +386,14 @@ function Tasks() {
 
               <div>
                 <label
-                  htmlFor="dueDate"
+                  htmlFor="create-due-date"
                   className="mb-2 block text-sm font-medium text-slate-700"
                 >
                   Due Date
                 </label>
 
                 <input
-                  id="dueDate"
+                  id="create-due-date"
                   type="date"
                   value={dueDate}
                   onChange={(event) =>
@@ -287,14 +408,14 @@ function Tasks() {
             {/* Assigned To */}
             <div>
               <label
-                htmlFor="assignedTo"
+                htmlFor="create-assigned-to"
                 className="mb-2 block text-sm font-medium text-slate-700"
               >
                 Assign To
               </label>
 
               <input
-                id="assignedTo"
+                id="create-assigned-to"
                 type="number"
                 min="1"
                 value={assignedTo}
@@ -341,6 +462,213 @@ function Tasks() {
         </div>
       )}
 
+      {/* Edit Task Form */}
+      {editingTask && (
+        <div className="mb-6 rounded-2xl border border-blue-200 bg-white p-6 shadow-sm">
+
+          <div className="mb-6 flex items-center justify-between">
+
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">
+                Edit Task
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Updating Task #{editingTask.id}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={closeEditForm}
+              className="text-sm font-medium text-slate-500 hover:text-slate-900"
+            >
+              Cancel
+            </button>
+
+          </div>
+
+          <form
+            onSubmit={handleUpdateTask}
+            className="space-y-5"
+          >
+
+            {/* Title */}
+            <div>
+              <label
+                htmlFor="edit-title"
+                className="mb-2 block text-sm font-medium text-slate-700"
+              >
+                Title
+              </label>
+
+              <input
+                id="edit-title"
+                type="text"
+                value={title}
+                onChange={(event) =>
+                  setTitle(event.target.value)
+                }
+                required
+                maxLength={200}
+                className="w-full rounded-lg border border-slate-300 px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+              />
+            </div>
+
+            {/* Description */}
+            <div>
+              <label
+                htmlFor="edit-description"
+                className="mb-2 block text-sm font-medium text-slate-700"
+              >
+                Description
+              </label>
+
+              <textarea
+                id="edit-description"
+                value={description}
+                onChange={(event) =>
+                  setDescription(event.target.value)
+                }
+                rows={4}
+                className="w-full resize-none rounded-lg border border-slate-300 px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+              />
+            </div>
+
+            {/* Status + Priority */}
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+
+              <div>
+                <label
+                  htmlFor="edit-status"
+                  className="mb-2 block text-sm font-medium text-slate-700"
+                >
+                  Status
+                </label>
+
+                <select
+                  id="edit-status"
+                  value={status}
+                  onChange={(event) =>
+                    setStatus(event.target.value)
+                  }
+                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                >
+                  <option value="todo">
+                    To Do
+                  </option>
+
+                  <option value="in_progress">
+                    In Progress
+                  </option>
+
+                  <option value="done">
+                    Completed
+                  </option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="edit-priority"
+                  className="mb-2 block text-sm font-medium text-slate-700"
+                >
+                  Priority
+                </label>
+
+                <select
+                  id="edit-priority"
+                  value={priority}
+                  onChange={(event) =>
+                    setPriority(event.target.value)
+                  }
+                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                >
+                  <option value="low">
+                    Low
+                  </option>
+
+                  <option value="medium">
+                    Medium
+                  </option>
+
+                  <option value="high">
+                    High
+                  </option>
+                </select>
+              </div>
+
+            </div>
+
+            {/* Due Date */}
+            <div>
+              <label
+                htmlFor="edit-due-date"
+                className="mb-2 block text-sm font-medium text-slate-700"
+              >
+                Due Date
+              </label>
+
+              <input
+                id="edit-due-date"
+                type="date"
+                value={dueDate}
+                onChange={(event) =>
+                  setDueDate(event.target.value)
+                }
+                className="w-full rounded-lg border border-slate-300 px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+              />
+            </div>
+
+            {/* Assigned To */}
+            <div>
+              <label
+                htmlFor="edit-assigned-to"
+                className="mb-2 block text-sm font-medium text-slate-700"
+              >
+                Assigned To
+              </label>
+
+              <input
+                id="edit-assigned-to"
+                type="number"
+                min="1"
+                value={assignedTo}
+                onChange={(event) =>
+                  setAssignedTo(event.target.value)
+                }
+                placeholder="User ID"
+                className="w-full rounded-lg border border-slate-300 px-4 py-3 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+              />
+            </div>
+
+            {/* Buttons */}
+            <div className="flex gap-3 pt-2">
+
+              <button
+                type="submit"
+                disabled={updating}
+                className="rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {updating
+                  ? "Saving..."
+                  : "Save Changes"}
+              </button>
+
+              <button
+                type="button"
+                onClick={closeEditForm}
+                className="rounded-lg border border-slate-300 px-6 py-3 font-medium text-slate-700 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+
+            </div>
+
+          </form>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 
@@ -348,14 +676,14 @@ function Tasks() {
 
           <div className="w-full md:w-56">
             <label
-              htmlFor="status"
+              htmlFor="status-filter"
               className="mb-2 block text-sm font-medium text-slate-700"
             >
               Status
             </label>
 
             <select
-              id="status"
+              id="status-filter"
               value={statusFilter}
               onChange={(event) =>
                 setStatusFilter(event.target.value)
@@ -382,14 +710,14 @@ function Tasks() {
 
           <div className="w-full md:w-56">
             <label
-              htmlFor="priorityFilter"
+              htmlFor="priority-filter"
               className="mb-2 block text-sm font-medium text-slate-700"
             >
               Priority
             </label>
 
             <select
-              id="priorityFilter"
+              id="priority-filter"
               value={priorityFilter}
               onChange={(event) =>
                 setPriorityFilter(event.target.value)
@@ -450,7 +778,7 @@ function Tasks() {
               className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md"
             >
 
-              <div className="flex flex-col justify-between gap-4 md:flex-row">
+              <div className="flex flex-col justify-between gap-4 lg:flex-row">
 
                 <div>
                   <h2 className="text-xl font-semibold text-slate-900">
@@ -506,6 +834,35 @@ function Tasks() {
                       ).toLocaleDateString()
                     : "No due date"}
                 </div>
+
+              </div>
+
+              {/* Actions */}
+              <div className="mt-5 flex flex-wrap gap-3 border-t border-slate-100 pt-4">
+
+                <button
+                  type="button"
+                  onClick={() => openEditForm(task)}
+                  className="rounded-lg border border-blue-200 px-4 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-50"
+                >
+                  Edit
+                </button>
+
+                {(user?.role === "admin" ||
+                  user?.role === "manager") && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleDeleteTask(task.id)
+                    }
+                    disabled={deletingTaskId === task.id}
+                    className="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {deletingTaskId === task.id
+                      ? "Deleting..."
+                      : "Delete"}
+                  </button>
+                )}
 
               </div>
 

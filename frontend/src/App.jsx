@@ -1,56 +1,68 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import ProtectedRoute from "./components/ProtectedRoute";
-import Navbar from "./components/Navbar";
-import Sidebar from "./components/Sidebar";
+import Layout from "./components/Layout";
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Tasks from "./pages/Tasks";
-
-function AppLayout({ children }) {
-  return (
-    <div className="flex min-h-screen bg-slate-100">
-      <Sidebar />
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Navbar />
-
-        <main className="flex-1">
-          {children}
-        </main>
-      </div>
-    </div>
-  );
-}
+import Users from "./pages/Users";
+import Activity from "./pages/Activity";
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={<Login />} />
+        {/* Public route */}
+        <Route
+          path="/login"
+          element={<Login />}
+        />
 
+        {/* Protected routes */}
         <Route element={<ProtectedRoute />}>
           <Route
             path="/dashboard"
             element={
-              <AppLayout>
+              <Layout>
                 <Dashboard />
-              </AppLayout>
+              </Layout>
             }
           />
 
           <Route
             path="/tasks"
             element={
-              <AppLayout>
+              <Layout>
                 <Tasks />
-              </AppLayout>
+              </Layout>
+            }
+          />
+
+          <Route
+            path="/users"
+            element={
+              <Layout>
+                <Users />
+              </Layout>
+            }
+          />
+
+          <Route
+            path="/activity"
+            element={
+              <Layout>
+                <Activity />
+              </Layout>
             }
           />
         </Route>
 
-        <Route path="*" element={<Login />} />
+        {/* Fallback */}
+        <Route
+          path="*"
+          element={<Login />}
+        />
       </Routes>
     </BrowserRouter>
   );
