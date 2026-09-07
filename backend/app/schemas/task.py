@@ -4,8 +4,19 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-TaskStatus = Literal["todo", "in_progress", "done"]
-TaskPriority = Literal["low", "medium", "high"]
+TaskStatus = Literal[
+    "todo",
+    "in_progress",
+    "review",
+    "done",
+]
+class TaskStatusUpdate(BaseModel):
+    status: TaskStatus
+TaskPriority = Literal[
+    "low",
+    "medium",
+    "high",
+]
 
 
 class TaskCreate(BaseModel):
@@ -42,3 +53,8 @@ class TaskResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+class KanbanResponse(BaseModel):
+    todo: list[TaskResponse]
+    in_progress: list[TaskResponse]
+    review: list[TaskResponse]
+    done: list[TaskResponse]
