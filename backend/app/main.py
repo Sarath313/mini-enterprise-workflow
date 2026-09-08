@@ -7,6 +7,7 @@ from app.routers.users import router as users_router
 from app.routers.activities import router as activities_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers import comments
+from app.routers import approvals
 
 
 app = FastAPI(
@@ -34,6 +35,7 @@ app.include_router(tasks_router)
 app.include_router(activities_router)
 app.include_router(dashboard_router)
 app.include_router(comments.router)
+app.include_router(approvals.router)
 
 
 @app.get("/")
