@@ -25,6 +25,10 @@ def check_task_access(
     task: Task,
     current_user: User,
 ) -> None:
+    """
+    Check whether the current user can access the task.
+    """
+
     if current_user.role == "admin":
         return
 
@@ -49,6 +53,10 @@ def check_task_access(
 def build_approval_response(
     approval: Approval,
 ) -> ApprovalResponse:
+    """
+    Convert an Approval model into the API response schema.
+    """
+
     return ApprovalResponse(
         id=approval.id,
         task_id=approval.task_id,
@@ -72,6 +80,10 @@ def submit_for_approval(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Submit a task in review status for manager approval.
+    """
+
     task = (
         db.query(Task)
         .filter(Task.id == task_id)
@@ -84,7 +96,10 @@ def submit_for_approval(
             detail="Task not found",
         )
 
-    check_task_access(task, current_user)
+    check_task_access(
+        task,
+        current_user,
+    )
 
     if task.status != "review":
         raise HTTPException(
@@ -112,7 +127,10 @@ def submit_for_approval(
 
     manager = (
         db.query(User)
-        .filter(User.role == "manager")
+        .filter(
+            User.role == "manager",
+            User.id != current_user.id,
+        )
         .order_by(User.id)
         .first()
     )
@@ -169,6 +187,10 @@ def get_task_approvals(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Get all approval records associated with a task.
+    """
+
     task = (
         db.query(Task)
         .filter(Task.id == task_id)
@@ -181,7 +203,10 @@ def get_task_approvals(
             detail="Task not found",
         )
 
-    check_task_access(task, current_user)
+    check_task_access(
+        task,
+        current_user,
+    )
 
     approvals = (
         db.query(Approval)
@@ -209,6 +234,10 @@ def get_approval_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Get the complete approval audit history for a task.
+    """
+
     task = (
         db.query(Task)
         .filter(Task.id == task_id)
@@ -221,7 +250,10 @@ def get_approval_history(
             detail="Task not found",
         )
 
-    check_task_access(task, current_user)
+    check_task_access(
+        task,
+        current_user,
+    )
 
     history = (
         db.query(ApprovalHistory)
@@ -248,6 +280,10 @@ def process_approval(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Approve, reject, or hold an approval.
+    """
+
     task = (
         db.query(Task)
         .filter(Task.id == task_id)
@@ -275,16 +311,51 @@ def process_approval(
             detail="Approval not found",
         )
 
-    if current_user.role not in {"manager", "admin"}:
+    # Employees are never allowed to process approvals.
+    if current_user.role not in {
+        "manager",
+        "admin",
+    }:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only managers and admins can process approvals",
+            detail=(
+                "Only managers and admins "
+                "can process approvals"
+            ),
         )
 
+    # Only the assigned approver can process
+    # the specific approval.
     if approval.approver_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not the assigned approver",
+        )
+
+    # Manager can process manager approvals only.
+    if (
+        approval.level == "manager"
+        and current_user.role != "manager"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Only a manager can process "
+                "manager-level approval"
+            ),
+        )
+
+    # Admin can process admin approvals only.
+    if (
+        approval.level == "admin"
+        and current_user.role != "admin"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Only an admin can process "
+                "admin-level approval"
+            ),
         )
 
     if approval.status != "pending":
@@ -293,20 +364,28 @@ def process_approval(
             detail="This approval has already been processed",
         )
 
-    if (
-        approval_data.action == "rejected"
-        and not approval_data.comment
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A comment is required when rejecting an approval",
-        )
-
     if approval_data.action == "submitted":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Submitted is not a valid approval decision",
+            detail=(
+                "Submitted is not a valid "
+                "approval decision"
+            ),
         )
+
+    # Rejection requires a meaningful comment.
+    if approval_data.action == "rejected":
+        if (
+            not approval_data.comment
+            or not approval_data.comment.strip()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "A comment is required "
+                    "when rejecting an approval"
+                ),
+            )
 
     approval.status = approval_data.action
     approval.comment = approval_data.comment
@@ -332,15 +411,46 @@ def process_approval(
         ),
     )
 
-    # Rejection sends the task back for changes.
+    # -------------------------------------------------
+    # REJECT
+    # -------------------------------------------------
+
     if approval_data.action == "rejected":
         task.status = "in_progress"
 
-    # Hold keeps the task in review.
+        create_task_activity(
+            db=db,
+            task_id=task.id,
+            user_id=current_user.id,
+            action="approval_rejected",
+            details=(
+                f"{approval.level.title()} approval "
+                f"rejected. Task returned to in_progress."
+            ),
+        )
+
+    # -------------------------------------------------
+    # HOLD
+    # -------------------------------------------------
+
     elif approval_data.action == "hold":
         task.status = "review"
 
-    # Manager approval escalates to Admin.
+        create_task_activity(
+            db=db,
+            task_id=task.id,
+            user_id=current_user.id,
+            action="approval_on_hold",
+            details=(
+                f"{approval.level.title()} approval "
+                f"placed on hold."
+            ),
+        )
+
+    # -------------------------------------------------
+    # MANAGER APPROVED → ESCALATE TO ADMIN
+    # -------------------------------------------------
+
     elif (
         approval_data.action == "approved"
         and approval.level == "manager"
@@ -357,7 +467,10 @@ def process_approval(
 
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No admin is available for final approval",
+                detail=(
+                    "No admin is available "
+                    "for final approval"
+                ),
             )
 
         admin_approval = Approval(
@@ -386,13 +499,20 @@ def process_approval(
             user_id=current_user.id,
             action="approval_escalated",
             details=(
-                f"Manager approval completed. "
+                "Manager approval completed. "
                 f"Task escalated to admin {admin.id} "
-                f"for final approval."
+                "for final approval."
             ),
         )
 
-    # Admin approval completes the workflow.
+        # Task remains in review while waiting
+        # for final admin approval.
+        task.status = "review"
+
+    # -------------------------------------------------
+    # ADMIN APPROVED → COMPLETE TASK
+    # -------------------------------------------------
+
     elif (
         approval_data.action == "approved"
         and approval.level == "admin"
@@ -404,7 +524,10 @@ def process_approval(
             task_id=task.id,
             user_id=current_user.id,
             action="task_completed",
-            details="Final admin approval completed.",
+            details=(
+                "Final admin approval completed. "
+                "Task marked as done."
+            ),
         )
 
     db.commit()

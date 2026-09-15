@@ -1,67 +1,147 @@
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+} from "react-router-dom";
 
-import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Tasks from "./pages/Tasks";
+import Kanban from "./pages/Kanban";
 import Users from "./pages/Users";
 import Activity from "./pages/Activity";
+import Comments from "./pages/Comments";
+import Approvals from "./pages/Approvals";
+import { useAuth } from "./context/AuthContext";
+
+function ProtectedRoute({ children }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-100">
+        <div className="text-sm font-medium text-slate-500">
+          Loading...
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+}
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public route */}
-        <Route
-          path="/login"
-          element={<Login />}
-        />
+        {/* Login */}
+        <Route path="/login" element={<Login />} />
 
-        {/* Protected routes */}
-        <Route element={<ProtectedRoute />}>
-          <Route
-            path="/dashboard"
-            element={
+        {/* Dashboard */}
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
               <Layout>
                 <Dashboard />
               </Layout>
-            }
-          />
+            </ProtectedRoute>
+          }
+        />
 
-          <Route
-            path="/tasks"
-            element={
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Dashboard />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Tasks */}
+        <Route
+          path="/tasks"
+          element={
+            <ProtectedRoute>
               <Layout>
                 <Tasks />
               </Layout>
-            }
-          />
+            </ProtectedRoute>
+          }
+        />
 
-          <Route
-            path="/users"
-            element={
+        {/* Kanban */}
+        <Route
+          path="/kanban"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Kanban />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Comments */}
+        <Route
+          path="/comments"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Comments />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+                {/* Approvals */}
+        <Route
+          path="/approvals"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Approvals />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Users */}
+        <Route
+          path="/users"
+          element={
+            <ProtectedRoute>
               <Layout>
                 <Users />
               </Layout>
-            }
-          />
+            </ProtectedRoute>
+          }
+        />
 
-          <Route
-            path="/activity"
-            element={
+        {/* Activity */}
+        <Route
+          path="/activity"
+          element={
+            <ProtectedRoute>
               <Layout>
                 <Activity />
               </Layout>
-            }
-          />
-        </Route>
+            </ProtectedRoute>
+          }
+        />
 
-        {/* Fallback */}
+        {/* Unknown routes */}
         <Route
           path="*"
-          element={<Login />}
+          element={<Navigate to="/dashboard" replace />}
         />
       </Routes>
     </BrowserRouter>

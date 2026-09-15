@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+
 import { useAuth } from "../context/AuthContext";
 
 function Sidebar({ mobileOpen, setMobileOpen }) {
@@ -10,21 +11,43 @@ function Sidebar({ mobileOpen, setMobileOpen }) {
       path: "/dashboard",
       roles: ["admin", "manager", "employee"],
     },
+
     {
       name: "Tasks",
       path: "/tasks",
       roles: ["admin", "manager"],
     },
+
     {
       name: "My Tasks",
       path: "/tasks",
       roles: ["employee"],
     },
+
+    {
+      name: "Kanban",
+      path: "/kanban",
+      roles: ["admin", "manager", "employee"],
+    },
+
+    {
+      name: "Comments",
+      path: "/comments",
+      roles: ["admin", "manager", "employee"],
+    },
+
+    {
+      name: "Approvals",
+      path: "/approvals",
+      roles: ["admin", "manager"],
+    },
+
     {
       name: "Users",
       path: "/users",
       roles: ["admin"],
     },
+
     {
       name: "Activity",
       path: "/activity",
@@ -111,7 +134,7 @@ function Sidebar({ mobileOpen, setMobileOpen }) {
             className="rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white"
             aria-label="Close navigation"
           >
-            ✕
+            ×
           </button>
         </div>
 
