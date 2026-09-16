@@ -562,6 +562,10 @@ function Tasks() {
                     In Progress
                   </option>
 
+                  <option value="review">
+                    In Review
+                  </option>
+
                   <option value="done">
                     Completed
                   </option>
@@ -702,6 +706,10 @@ function Tasks() {
                 In Progress
               </option>
 
+              <option value="review">
+                In Review
+              </option>
+
               <option value="done">
                 Completed
               </option>
@@ -794,8 +802,28 @@ function Tasks() {
 
                 <div className="flex gap-2">
 
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium capitalize text-slate-700">
-                    {task.status.replace("_", " ")}
+                  <span
+                    className={`rounded-full px-3 py-1 text-sm font-medium ${
+                      task.status === "todo"
+                        ? "bg-slate-100 text-slate-700"
+                        : task.status === "in_progress"
+                        ? "bg-blue-100 text-blue-700"
+                        : task.status === "review"
+                        ? "bg-amber-100 text-amber-700"
+                        : task.status === "done"
+                        ? "bg-green-100 text-green-700"
+                        : "bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    {task.status === "todo"
+                      ? "To Do"
+                      : task.status === "in_progress"
+                      ? "In Progress"
+                      : task.status === "review"
+                      ? "In Review"
+                      : task.status === "done"
+                      ? "Completed"
+                      : task.status.replace("_", " ")}
                   </span>
 
                   <span className="rounded-full bg-blue-100 px-3 py-1 text-sm font-medium capitalize text-blue-700">
@@ -855,7 +883,9 @@ function Tasks() {
                     onClick={() =>
                       handleDeleteTask(task.id)
                     }
-                    disabled={deletingTaskId === task.id}
+                    disabled={
+                      deletingTaskId === task.id
+                    }
                     className="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {deletingTaskId === task.id
@@ -871,7 +901,6 @@ function Tasks() {
 
         </div>
       )}
-
     </div>
   );
 }
