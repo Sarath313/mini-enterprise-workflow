@@ -5,3 +5,4 @@ from app.models.status_history import TaskStatusHistory
 from app.models.comment import Comment
 from app.models.approval import Approval
 from app.models.approval_history import ApprovalHistory
+from app.models.document import Document

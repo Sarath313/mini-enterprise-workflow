@@ -15,7 +15,10 @@ import Users from "./pages/Users";
 import Activity from "./pages/Activity";
 import Comments from "./pages/Comments";
 import Approvals from "./pages/Approvals";
+import Documents from "./pages/Documents";
+
 import { useAuth } from "./context/AuthContext";
+
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -37,12 +40,18 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
+
 function App() {
   return (
     <BrowserRouter>
       <Routes>
+
         {/* Login */}
-        <Route path="/login" element={<Login />} />
+        <Route
+          path="/login"
+          element={<Login />}
+        />
+
 
         {/* Dashboard */}
         <Route
@@ -67,6 +76,7 @@ function App() {
           }
         />
 
+
         {/* Tasks */}
         <Route
           path="/tasks"
@@ -78,6 +88,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
 
         {/* Kanban */}
         <Route
@@ -91,6 +102,20 @@ function App() {
           }
         />
 
+
+        {/* Documents */}
+        <Route
+          path="/documents"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Documents />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+
         {/* Comments */}
         <Route
           path="/comments"
@@ -102,7 +127,9 @@ function App() {
             </ProtectedRoute>
           }
         />
-                {/* Approvals */}
+
+
+        {/* Approvals */}
         <Route
           path="/approvals"
           element={
@@ -113,6 +140,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
 
         {/* Users */}
         <Route
@@ -126,6 +154,7 @@ function App() {
           }
         />
 
+
         {/* Activity */}
         <Route
           path="/activity"
@@ -138,14 +167,22 @@ function App() {
           }
         />
 
+
         {/* Unknown routes */}
         <Route
           path="*"
-          element={<Navigate to="/dashboard" replace />}
+          element={
+            <Navigate
+              to="/dashboard"
+              replace
+            />
+          }
         />
+
       </Routes>
     </BrowserRouter>
   );
 }
+
 
 export default App;

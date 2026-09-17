@@ -31,6 +31,12 @@ function Sidebar({ mobileOpen, setMobileOpen }) {
     },
 
     {
+      name: "Documents",
+      path: "/documents",
+      roles: ["admin", "manager", "employee"],
+    },
+
+    {
       name: "Comments",
       path: "/comments",
       roles: ["admin", "manager", "employee"],
