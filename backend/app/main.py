@@ -9,6 +9,7 @@ from app.routers.dashboard import router as dashboard_router
 from app.routers import comments
 from app.routers import approvals
 from app.routers import documents
+from app.routers import audit_logs
 
 
 app = FastAPI(
@@ -38,6 +39,7 @@ app.include_router(dashboard_router)
 app.include_router(comments.router)
 app.include_router(approvals.router)
 app.include_router(documents.router)
+app.include_router(audit_logs.router)
 
 
 @app.get("/")

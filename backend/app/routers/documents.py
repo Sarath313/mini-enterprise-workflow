@@ -18,6 +18,7 @@ from app.models.document import Document
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.document import DocumentResponse
+from app.utils.audit import create_audit_log
 
 
 router = APIRouter(
@@ -264,6 +265,18 @@ async def upload_document(
         )
 
         db.add(document)
+        db.flush()
+
+        # Create immutable audit record.
+        create_audit_log(
+            db=db,
+            user_id=current_user.id,
+            action="DOCUMENT_UPLOADED",
+            entity="document",
+            entity_id=document.id,
+        )
+
+        # Commit document and audit log together.
         db.commit()
         db.refresh(document)
 
@@ -328,6 +341,17 @@ def get_document(
             detail="Document file not found on server",
         )
 
+    # Record successful document access.
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="DOCUMENT_DOWNLOADED",
+        entity="document",
+        entity_id=document.id,
+    )
+
+    db.commit()
+
     return FileResponse(
         path=file_path,
         filename=document.file_name,
@@ -379,5 +403,16 @@ def get_task_documents(
         )
         .all()
     )
+
+    # Record that the task's documents were viewed.
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="DOCUMENTS_VIEWED",
+        entity="task",
+        entity_id=task_id,
+    )
+
+    db.commit()
 
     return documents
