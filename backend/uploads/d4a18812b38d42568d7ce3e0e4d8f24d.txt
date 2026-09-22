@@ -1,0 +1,4 @@
+Mini Enterprise Workflow - Audit Test Document
+
+This is a test document for Phase 3 document upload and audit logging.
+Uploaded for verifying DOCUMENT_UPLOADED audit events.

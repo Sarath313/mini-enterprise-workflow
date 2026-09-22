@@ -13,6 +13,7 @@ from app.schemas.approval import (
     ApprovalResponse,
 )
 from app.utils.activity import create_task_activity
+from app.utils.audit import create_audit_log
 
 
 router = APIRouter(
@@ -20,6 +21,10 @@ router = APIRouter(
     tags=["Approvals"],
 )
 
+
+# =========================================================
+# HELPER — CHECK TASK ACCESS
+# =========================================================
 
 def check_task_access(
     task: Task,
@@ -41,6 +46,7 @@ def check_task_access(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this task",
             )
+
         return
 
     if task.assigned_to != current_user.id:
@@ -49,6 +55,10 @@ def check_task_access(
             detail="You do not have access to this task",
         )
 
+
+# =========================================================
+# HELPER — BUILD APPROVAL RESPONSE
+# =========================================================
 
 def build_approval_response(
     approval: Approval,
@@ -69,6 +79,10 @@ def build_approval_response(
         updated_at=approval.updated_at,
     )
 
+
+# =========================================================
+# SUBMIT FOR APPROVAL
+# =========================================================
 
 @router.post(
     "/{task_id}/approvals",
@@ -172,11 +186,27 @@ def submit_for_approval(
         ),
     )
 
+    # ---------------------------------------------------------
+    # PHASE 3 AUDIT LOG
+    # ---------------------------------------------------------
+
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="APPROVAL_CREATED",
+        entity="approval",
+        entity_id=approval.id,
+    )
+
     db.commit()
     db.refresh(approval)
 
     return build_approval_response(approval)
 
+
+# =========================================================
+# GET TASK APPROVALS
+# =========================================================
 
 @router.get(
     "/{task_id}/approvals",
@@ -225,6 +255,10 @@ def get_task_approvals(
     ]
 
 
+# =========================================================
+# GET APPROVAL HISTORY
+# =========================================================
+
 @router.get(
     "/{task_id}/approvals/history",
     response_model=list[ApprovalHistoryResponse],
@@ -269,6 +303,10 @@ def get_approval_history(
     return history
 
 
+# =========================================================
+# PROCESS APPROVAL
+# =========================================================
+
 @router.patch(
     "/{task_id}/approvals/{approval_id}",
     response_model=ApprovalResponse,
@@ -311,7 +349,10 @@ def process_approval(
             detail="Approval not found",
         )
 
-    # Employees are never allowed to process approvals.
+    # ---------------------------------------------------------
+    # ROLE CHECK
+    # ---------------------------------------------------------
+
     if current_user.role not in {
         "manager",
         "admin",
@@ -324,15 +365,20 @@ def process_approval(
             ),
         )
 
-    # Only the assigned approver can process
-    # the specific approval.
+    # ---------------------------------------------------------
+    # APPROVER CHECK
+    # ---------------------------------------------------------
+
     if approval.approver_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not the assigned approver",
         )
 
-    # Manager can process manager approvals only.
+    # ---------------------------------------------------------
+    # APPROVAL LEVEL CHECK
+    # ---------------------------------------------------------
+
     if (
         approval.level == "manager"
         and current_user.role != "manager"
@@ -345,7 +391,6 @@ def process_approval(
             ),
         )
 
-    # Admin can process admin approvals only.
     if (
         approval.level == "admin"
         and current_user.role != "admin"
@@ -357,6 +402,10 @@ def process_approval(
                 "admin-level approval"
             ),
         )
+
+    # ---------------------------------------------------------
+    # STATUS CHECK
+    # ---------------------------------------------------------
 
     if approval.status != "pending":
         raise HTTPException(
@@ -373,7 +422,10 @@ def process_approval(
             ),
         )
 
-    # Rejection requires a meaningful comment.
+    # ---------------------------------------------------------
+    # REJECTION COMMENT VALIDATION
+    # ---------------------------------------------------------
+
     if approval_data.action == "rejected":
         if (
             not approval_data.comment
@@ -386,6 +438,10 @@ def process_approval(
                     "when rejecting an approval"
                 ),
             )
+
+    # ---------------------------------------------------------
+    # UPDATE APPROVAL
+    # ---------------------------------------------------------
 
     approval.status = approval_data.action
     approval.comment = approval_data.comment
@@ -411,11 +467,24 @@ def process_approval(
         ),
     )
 
-    # -------------------------------------------------
+    # ---------------------------------------------------------
+    # PHASE 3 AUDIT LOG — APPROVAL PROCESSED
+    # ---------------------------------------------------------
+
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="APPROVAL_PROCESSED",
+        entity="approval",
+        entity_id=approval.id,
+    )
+
+    # ---------------------------------------------------------
     # REJECT
-    # -------------------------------------------------
+    # ---------------------------------------------------------
 
     if approval_data.action == "rejected":
+        old_status = task.status
         task.status = "in_progress"
 
         create_task_activity(
@@ -429,11 +498,21 @@ def process_approval(
             ),
         )
 
-    # -------------------------------------------------
+        if old_status != task.status:
+            create_audit_log(
+                db=db,
+                user_id=current_user.id,
+                action="TASK_STATUS_CHANGED",
+                entity="task",
+                entity_id=task.id,
+            )
+
+    # ---------------------------------------------------------
     # HOLD
-    # -------------------------------------------------
+    # ---------------------------------------------------------
 
     elif approval_data.action == "hold":
+        old_status = task.status
         task.status = "review"
 
         create_task_activity(
@@ -447,9 +526,18 @@ def process_approval(
             ),
         )
 
-    # -------------------------------------------------
+        if old_status != task.status:
+            create_audit_log(
+                db=db,
+                user_id=current_user.id,
+                action="TASK_STATUS_CHANGED",
+                entity="task",
+                entity_id=task.id,
+            )
+
+    # ---------------------------------------------------------
     # MANAGER APPROVED → ESCALATE TO ADMIN
-    # -------------------------------------------------
+    # ---------------------------------------------------------
 
     elif (
         approval_data.action == "approved"
@@ -505,18 +593,41 @@ def process_approval(
             ),
         )
 
+        # -----------------------------------------------------
+        # PHASE 3 AUDIT LOG — ESCALATION
+        # -----------------------------------------------------
+
+        create_audit_log(
+            db=db,
+            user_id=current_user.id,
+            action="APPROVAL_ESCALATED",
+            entity="approval",
+            entity_id=admin_approval.id,
+        )
+
         # Task remains in review while waiting
         # for final admin approval.
+        old_status = task.status
         task.status = "review"
 
-    # -------------------------------------------------
+        if old_status != task.status:
+            create_audit_log(
+                db=db,
+                user_id=current_user.id,
+                action="TASK_STATUS_CHANGED",
+                entity="task",
+                entity_id=task.id,
+            )
+
+    # ---------------------------------------------------------
     # ADMIN APPROVED → COMPLETE TASK
-    # -------------------------------------------------
+    # ---------------------------------------------------------
 
     elif (
         approval_data.action == "approved"
         and approval.level == "admin"
     ):
+        old_status = task.status
         task.status = "done"
 
         create_task_activity(
@@ -529,6 +640,19 @@ def process_approval(
                 "Task marked as done."
             ),
         )
+
+        if old_status != task.status:
+            create_audit_log(
+                db=db,
+                user_id=current_user.id,
+                action="TASK_STATUS_CHANGED",
+                entity="task",
+                entity_id=task.id,
+            )
+
+    # ---------------------------------------------------------
+    # COMMIT
+    # ---------------------------------------------------------
 
     db.commit()
     db.refresh(approval)

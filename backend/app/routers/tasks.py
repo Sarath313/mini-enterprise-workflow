@@ -18,6 +18,7 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.utils.activity import create_task_activity
+from app.utils.audit import create_audit_log
 from app.utils.workflow import validate_status_transition
 
 
@@ -82,6 +83,15 @@ def create_task(
             action="assigned",
             details=f"Task assigned to user ID {new_task.assigned_to}",
         )
+
+    # Phase 3 audit log
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="TASK_CREATED",
+        entity="task",
+        entity_id=new_task.id,
+    )
 
     db.commit()
     db.refresh(new_task)
@@ -371,7 +381,7 @@ def update_task(
         setattr(task, field, value)
 
     # ---------------------------------------------------------
-    # STATUS ACTIVITY + STATUS HISTORY
+    # STATUS ACTIVITY + STATUS HISTORY + AUDIT
     # ---------------------------------------------------------
 
     if "status" in update_data:
@@ -397,8 +407,17 @@ def update_task(
 
             db.add(status_history)
 
+            # Phase 3 audit log
+            create_audit_log(
+                db=db,
+                user_id=current_user.id,
+                action="TASK_STATUS_CHANGED",
+                entity="task",
+                entity_id=task.id,
+            )
+
     # ---------------------------------------------------------
-    # ASSIGNMENT ACTIVITY
+    # ASSIGNMENT ACTIVITY + AUDIT
     # ---------------------------------------------------------
 
     if "assigned_to" in update_data:
@@ -421,8 +440,17 @@ def update_task(
                 details=details,
             )
 
+            # Phase 3 audit log
+            create_audit_log(
+                db=db,
+                user_id=current_user.id,
+                action="TASK_ASSIGNED",
+                entity="task",
+                entity_id=task.id,
+            )
+
     # ---------------------------------------------------------
-    # OTHER FIELD UPDATE ACTIVITY
+    # OTHER FIELD UPDATE ACTIVITY + AUDIT
     # ---------------------------------------------------------
 
     non_activity_fields = {
@@ -446,6 +474,15 @@ def update_task(
                 "Updated fields: "
                 + ", ".join(other_changes)
             ),
+        )
+
+        # Phase 3 audit log
+        create_audit_log(
+            db=db,
+            user_id=current_user.id,
+            action="TASK_UPDATED",
+            entity="task",
+            entity_id=task.id,
         )
 
     # ---------------------------------------------------------
@@ -566,6 +603,18 @@ def update_task_status(
     db.add(status_history)
 
     # ---------------------------------------------------------
+    # PHASE 3 AUDIT LOG
+    # ---------------------------------------------------------
+
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="TASK_STATUS_CHANGED",
+        entity="task",
+        entity_id=task.id,
+    )
+
+    # ---------------------------------------------------------
     # SAVE CHANGES
     # ---------------------------------------------------------
 
@@ -633,6 +682,18 @@ def delete_task(
         user_id=current_user.id,
         action="deleted",
         details=f"Task '{task.title}' was deleted",
+    )
+
+    # ---------------------------------------------------------
+    # PHASE 3 AUDIT LOG
+    # ---------------------------------------------------------
+
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="TASK_DELETED",
+        entity="task",
+        entity_id=task.id,
     )
 
     db.flush()
@@ -704,7 +765,7 @@ def assign_task(
     task.assigned_to = assigned_user.id
 
     # ---------------------------------------------------------
-    # ASSIGNMENT ACTIVITY
+    # ASSIGNMENT ACTIVITY + AUDIT
     # ---------------------------------------------------------
 
     if old_assigned_to != task.assigned_to:
@@ -718,6 +779,15 @@ def assign_task(
                 f"{old_assigned_to} to user ID "
                 f"{task.assigned_to}"
             ),
+        )
+
+        # Phase 3 audit log
+        create_audit_log(
+            db=db,
+            user_id=current_user.id,
+            action="TASK_ASSIGNED",
+            entity="task",
+            entity_id=task.id,
         )
 
     db.commit()

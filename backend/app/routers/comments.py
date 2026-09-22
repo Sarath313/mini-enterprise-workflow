@@ -12,6 +12,7 @@ from app.schemas.comment import (
     CommentUpdate,
 )
 from app.utils.activity import create_task_activity
+from app.utils.audit import create_audit_log
 
 
 router = APIRouter(
@@ -130,6 +131,18 @@ def create_comment(
             f"{comment_data.visibility.capitalize()} comment "
             f"added to task"
         ),
+    )
+
+    # ---------------------------------------------------------
+    # PHASE 3 AUDIT LOG
+    # ---------------------------------------------------------
+
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="COMMENT_CREATED",
+        entity="comment",
+        entity_id=new_comment.id,
     )
 
     db.commit()
@@ -307,6 +320,18 @@ def update_comment(
         details=f"Comment ID {comment.id} was updated",
     )
 
+    # ---------------------------------------------------------
+    # PHASE 3 AUDIT LOG
+    # ---------------------------------------------------------
+
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="COMMENT_UPDATED",
+        entity="comment",
+        entity_id=comment.id,
+    )
+
     db.commit()
     db.refresh(comment)
 
@@ -397,6 +422,18 @@ def delete_comment(
         user_id=current_user.id,
         action="comment_deleted",
         details=f"Comment ID {comment.id} was deleted",
+    )
+
+    # ---------------------------------------------------------
+    # PHASE 3 AUDIT LOG
+    # ---------------------------------------------------------
+
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="COMMENT_DELETED",
+        entity="comment",
+        entity_id=comment.id,
     )
 
     db.delete(comment)
