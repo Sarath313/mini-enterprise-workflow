@@ -1,8 +1,7 @@
 import { NavLink } from "react-router-dom";
-
 import { useAuth } from "../context/AuthContext";
 
-function Sidebar({ mobileOpen, setMobileOpen }) {
+function Sidebar({ isOpen, onClose }) {
   const { user } = useAuth();
 
   const links = [
@@ -11,52 +10,49 @@ function Sidebar({ mobileOpen, setMobileOpen }) {
       path: "/dashboard",
       roles: ["admin", "manager", "employee"],
     },
-
     {
-      name: "Tasks",
+      name: user?.role === "employee" ? "My Tasks" : "Tasks",
       path: "/tasks",
-      roles: ["admin", "manager"],
+      roles: ["admin", "manager", "employee"],
     },
-
-    {
-      name: "My Tasks",
-      path: "/tasks",
-      roles: ["employee"],
-    },
-
     {
       name: "Kanban",
       path: "/kanban",
       roles: ["admin", "manager", "employee"],
     },
-
-    {
-      name: "Documents",
-      path: "/documents",
-      roles: ["admin", "manager", "employee"],
-    },
-
     {
       name: "Comments",
       path: "/comments",
       roles: ["admin", "manager", "employee"],
     },
-
     {
       name: "Approvals",
       path: "/approvals",
       roles: ["admin", "manager"],
     },
-
     {
       name: "Users",
       path: "/users",
       roles: ["admin"],
     },
-
     {
       name: "Activity",
       path: "/activity",
+      roles: ["admin", "manager", "employee"],
+    },
+    {
+      name: "Documents",
+      path: "/documents",
+      roles: ["admin", "manager", "employee"],
+    },
+    {
+      name: "Notifications",
+      path: "/notifications",
+      roles: ["admin", "manager", "employee"],
+    },
+    {
+      name: "AI Insights",
+      path: "/ai-insights",
       roles: ["admin", "manager", "employee"],
     },
   ];
@@ -65,96 +61,55 @@ function Sidebar({ mobileOpen, setMobileOpen }) {
     link.roles.includes(user?.role)
   );
 
-  const handleNavigation = () => {
-    if (setMobileOpen) {
-      setMobileOpen(false);
-    }
-  };
-
   return (
     <>
-      {/* Desktop Sidebar */}
-      <aside className="hidden w-64 flex-shrink-0 bg-slate-900 text-white md:block">
-        <div className="flex h-16 items-center border-b border-slate-700 px-6">
-          <h2 className="text-lg font-bold">
-            Enterprise Workflow
-          </h2>
-        </div>
-
-        <nav className="space-y-2 p-4">
-          {visibleLinks.map((link) => (
-            <NavLink
-              key={link.name}
-              to={link.path}
-              onClick={handleNavigation}
-              className={({ isActive }) =>
-                `block rounded-lg px-4 py-3 text-sm font-medium transition ${
-                  isActive
-                    ? "bg-blue-600 text-white"
-                    : "text-slate-300 hover:bg-slate-800 hover:text-white"
-                }`
-              }
-            >
-              {link.name}
-            </NavLink>
-          ))}
-        </nav>
-
-        {user && (
-          <div className="absolute bottom-0 w-64 border-t border-slate-700 p-4">
-            <p className="text-sm font-semibold text-white">
-              {user.name}
-            </p>
-
-            <p className="mt-1 text-xs capitalize text-slate-400">
-              {user.role}
-            </p>
-          </div>
-        )}
-      </aside>
-
       {/* Mobile Overlay */}
-      {mobileOpen && (
+      {isOpen && (
         <div
-          className="fixed inset-0 z-40 bg-slate-950/50 md:hidden"
-          onClick={() => setMobileOpen(false)}
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          onClick={onClose}
         />
       )}
 
-      {/* Mobile Sidebar */}
+      {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-72 transform bg-slate-900 text-white shadow-xl transition-transform duration-200 md:hidden ${
-          mobileOpen
-            ? "translate-x-0"
-            : "-translate-x-full"
+        className={`fixed left-0 top-0 z-50 flex h-screen w-64 flex-col border-r border-slate-200 bg-white transition-transform duration-300 lg:static lg:z-auto lg:translate-x-0 ${
+          isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="flex h-16 items-center justify-between border-b border-slate-700 px-5">
-          <h2 className="text-lg font-bold">
-            Enterprise Workflow
-          </h2>
+        {/* Logo / Header */}
+        <div className="flex h-16 items-center justify-between border-b border-slate-200 px-5">
+          <div>
+            <h1 className="text-lg font-bold text-slate-900">
+              Mini Enterprise
+            </h1>
+            <p className="text-xs text-slate-500">
+              Workflow Management
+            </p>
+          </div>
 
+          {/* Mobile Close Button */}
           <button
-            type="button"
-            onClick={() => setMobileOpen(false)}
-            className="rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white"
-            aria-label="Close navigation"
+            onClick={onClose}
+            className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 lg:hidden"
+            aria-label="Close sidebar"
           >
-            ×
+            ✕
           </button>
         </div>
 
-        <nav className="space-y-2 p-4">
+        {/* Navigation */}
+        <nav className="flex-1 space-y-1 overflow-y-auto p-4">
           {visibleLinks.map((link) => (
             <NavLink
-              key={link.name}
+              key={link.path}
               to={link.path}
-              onClick={handleNavigation}
+              onClick={onClose}
               className={({ isActive }) =>
-                `block rounded-lg px-4 py-3 text-sm font-medium transition ${
+                `flex items-center rounded-lg px-4 py-3 text-sm font-medium transition ${
                   isActive
-                    ? "bg-blue-600 text-white"
-                    : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`
               }
             >
@@ -163,17 +118,18 @@ function Sidebar({ mobileOpen, setMobileOpen }) {
           ))}
         </nav>
 
-        {user && (
-          <div className="absolute bottom-0 w-full border-t border-slate-700 p-4">
-            <p className="text-sm font-semibold text-white">
-              {user.name}
+        {/* User Information */}
+        <div className="border-t border-slate-200 p-4">
+          <div className="rounded-lg bg-slate-50 p-3">
+            <p className="truncate text-sm font-semibold text-slate-900">
+              {user?.email || "User"}
             </p>
 
-            <p className="mt-1 text-xs capitalize text-slate-400">
-              {user.role}
+            <p className="mt-1 text-xs capitalize text-slate-500">
+              {user?.role || "employee"}
             </p>
           </div>
-        )}
+        </div>
       </aside>
     </>
   );

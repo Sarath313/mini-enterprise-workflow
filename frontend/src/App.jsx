@@ -6,6 +6,7 @@ import {
 } from "react-router-dom";
 
 import Layout from "./components/Layout";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -16,55 +17,17 @@ import Activity from "./pages/Activity";
 import Comments from "./pages/Comments";
 import Approvals from "./pages/Approvals";
 import Documents from "./pages/Documents";
-
-import { useAuth } from "./context/AuthContext";
-
-
-function ProtectedRoute({ children }) {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <div className="text-sm font-medium text-slate-500">
-          Loading...
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-
-  return children;
-}
-
+import Notifications from "./pages/Notifications";
+import AIInsights from "./pages/AIInsights";
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-
-        {/* Login */}
-        <Route
-          path="/login"
-          element={<Login />}
-        />
-
+        {/* Public Route */}
+        <Route path="/login" element={<Login />} />
 
         {/* Dashboard */}
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Dashboard />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
         <Route
           path="/dashboard"
           element={
@@ -75,7 +38,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
 
         {/* Tasks */}
         <Route
@@ -89,7 +51,6 @@ function App() {
           }
         />
 
-
         {/* Kanban */}
         <Route
           path="/kanban"
@@ -101,46 +62,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-
-        {/* Documents */}
-        <Route
-          path="/documents"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Documents />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
-
-        {/* Comments */}
-        <Route
-          path="/comments"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Comments />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
-
-        {/* Approvals */}
-        <Route
-          path="/approvals"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Approvals />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
 
         {/* Users */}
         <Route
@@ -154,7 +75,6 @@ function App() {
           }
         />
 
-
         {/* Activity */}
         <Route
           path="/activity"
@@ -167,23 +87,81 @@ function App() {
           }
         />
 
-
-        {/* Unknown routes */}
+        {/* Comments */}
         <Route
-          path="*"
+          path="/comments"
           element={
-            <Navigate
-              to="/dashboard"
-              replace
-            />
+            <ProtectedRoute>
+              <Layout>
+                <Comments />
+              </Layout>
+            </ProtectedRoute>
           }
         />
 
+        {/* Approvals */}
+        <Route
+          path="/approvals"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Approvals />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Documents */}
+        <Route
+          path="/documents"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Documents />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Notifications */}
+        <Route
+          path="/notifications"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <Notifications />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* AI Insights */}
+        <Route
+          path="/ai-insights"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <AIInsights />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Default Route */}
+        <Route
+          path="/"
+          element={<Navigate to="/dashboard" replace />}
+        />
+
+        {/* Unknown Route */}
+        <Route
+          path="*"
+          element={<Navigate to="/dashboard" replace />}
+        />
       </Routes>
     </BrowserRouter>
   );
 }
-
 
 export default App;
 
