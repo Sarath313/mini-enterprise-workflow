@@ -7,3 +7,4 @@ from app.models.approval import Approval
 from app.models.approval_history import ApprovalHistory
 from app.models.document import Document
 from app.models.audit_log import AuditLog
+from app.models.notification import Notification
