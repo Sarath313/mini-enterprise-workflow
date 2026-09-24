@@ -91,14 +91,20 @@ function AIInsights() {
         </h2>
 
         <div className="mt-4 space-y-3">
-          {data.insights.map((insight, index) => (
-            <div
-              key={index}
-              className="rounded-lg bg-slate-50 p-4 text-sm text-slate-700"
-            >
-              • {insight}
-            </div>
-          ))}
+          {data.insights?.length ? (
+            data.insights.map((insight, index) => (
+              <div
+                key={index}
+                className="rounded-lg bg-slate-50 p-4 text-sm text-slate-700"
+              >
+                • {insight}
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-slate-500">
+              No additional insights available.
+            </p>
+          )}
         </div>
       </div>
     </div>
