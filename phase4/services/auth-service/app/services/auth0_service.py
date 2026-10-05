@@ -13,11 +13,15 @@ class Auth0Service:
     def base_url(self) -> str:
         return f"https://{self.settings.auth0_domain}"
 
-    def build_login_url(self, connection: str) -> str:
+    def build_login_url(
+        self,
+        connection: str,
+        redirect_uri: str,
+    ) -> str:
         params = {
             "response_type": "code",
             "client_id": self.settings.auth0_client_id,
-            "redirect_uri": self.settings.auth0_callback_url,
+            "redirect_uri": redirect_uri,
             "scope": "openid profile email",
             "audience": self.settings.auth0_audience,
             "connection": connection,
@@ -25,13 +29,17 @@ class Auth0Service:
 
         return f"{self.base_url}/authorize?{urlencode(params)}"
 
-    async def exchange_code(self, code: str) -> dict:
+    async def exchange_code(
+        self,
+        code: str,
+        redirect_uri: str,
+    ) -> dict:
         payload = {
             "grant_type": "authorization_code",
             "client_id": self.settings.auth0_client_id,
             "client_secret": self.settings.auth0_client_secret,
             "code": code,
-            "redirect_uri": self.settings.auth0_callback_url,
+            "redirect_uri": redirect_uri,
         }
 
         async with httpx.AsyncClient() as client:
@@ -46,7 +54,7 @@ class Auth0Service:
 
     async def get_userinfo(self, access_token: str) -> dict:
         headers = {
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {access_token}"
         }
 
         async with httpx.AsyncClient() as client:

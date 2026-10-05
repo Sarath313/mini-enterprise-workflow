@@ -1,0 +1,123 @@
+services:
+
+  auth-service:
+    image: python:3.12-slim
+    container_name: mini-enterprise-auth
+    working_dir: /app
+    volumes:
+      - ./services/auth-service:/app
+    ports:
+      - "8001:8001"
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8001"
+    environment:
+      AUTH0_DOMAIN: dev-vjl3cvfy6rcdwrdn.us.auth0.com
+      AUTH0_CLIENT_ID: your_auth0_client_id
+      AUTH0_CLIENT_SECRET: your_auth0_client_secret
+      AUTH0_AUDIENCE: https://mini-enterprise-api
+      AUTH0_CALLBACK_URL: http://localhost:8001/auth/callback
+      AUTH0_LOGOUT_URL: http://localhost:5173
+      AUTH0_GOOGLE_CONNECTION: google-oauth2
+      AUTH0_MICROSOFT_CONNECTION: azuread
+      USER_SERVICE_URL: http://user-service:8002
+      TENANT_SERVICE_URL: http://tenant-service:8003
+      FRONTEND_URL: http://localhost:5173
+    depends_on:
+      - user-service
+      - tenant-service
+
+  user-service:
+    image: python:3.12-slim
+    container_name: mini-enterprise-user
+    working_dir: /app
+    volumes:
+      - ./services/user-service:/app
+    ports:
+      - "8002:8002"
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8002"
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@user-db:5432/mini_enterprise_users
+      AUTH0_DOMAIN: dev-vjl3cvfy6rcdwrdn.us.auth0.com
+      AUTH0_AUDIENCE: https://mini-enterprise-api
+      SERVICE_PORT: 8002
+    depends_on:
+      user-db:
+        condition: service_healthy
+
+  tenant-service:
+    image: python:3.12-slim
+    container_name: mini-enterprise-tenant
+    working_dir: /app
+    volumes:
+      - ./services/tenant-service:/app
+    ports:
+      - "8003:8003"
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8003"
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@tenant-db:5432/mini_enterprise_tenants
+      AUTH0_DOMAIN: dev-vjl3cvfy6rcdwrdn.us.auth0.com
+      AUTH0_AUDIENCE: https://mini-enterprise-api
+      USER_SERVICE_URL: http://user-service:8002
+      SERVICE_PORT: 8003
+    depends_on:
+      tenant-db:
+        condition: service_healthy
+
+  frontend:
+    image: node:22
+    container_name: mini-enterprise-frontend
+    working_dir: /app
+    volumes:
+      - ../phase4frontend:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    command: >
+      sh -c "npm install &&
+      npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - auth-service
+
+  user-db:
+    image: postgres:18
+    container_name: mini-enterprise-user-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mini_enterprise_users
+    ports:
+      - "5433:5432"
+    volumes:
+      - user_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mini_enterprise_users"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  tenant-db:
+    image: postgres:18
+    container_name: mini-enterprise-tenant-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mini_enterprise_tenants
+    ports:
+      - "5434:5432"
+    volumes:
+      - tenant_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mini_enterprise_tenants"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  user_db_data:
+  tenant_db_data:
+  frontend_node_modules:
