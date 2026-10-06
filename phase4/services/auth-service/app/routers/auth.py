@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.auth.security import validate_access_token
 from app.config import get_settings
@@ -13,6 +14,8 @@ router = APIRouter(
 )
 
 settings = get_settings()
+
+bearer_scheme = HTTPBearer()
 
 
 GOOGLE_CALLBACK_URL = (
@@ -126,10 +129,18 @@ async def microsoft_logout():
 @router.get("/me")
 async def get_current_user(
     payload: dict = Depends(validate_access_token),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ):
+    user_info = await auth0_service.get_userinfo(
+        credentials.credentials
+    )
+
     return {
         "authenticated": True,
-        "user": payload,
+        "user": {
+            **payload,
+            **user_info,
+        },
     }
 
 
