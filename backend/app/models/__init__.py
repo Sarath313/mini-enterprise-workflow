@@ -8,3 +8,5 @@ from app.models.approval_history import ApprovalHistory
 from app.models.document import Document
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification
+
+from app.models.refresh_token import RefreshToken
