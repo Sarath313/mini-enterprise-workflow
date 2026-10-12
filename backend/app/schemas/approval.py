@@ -1,13 +1,11 @@
+
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-ApprovalLevel = Literal[
-    "manager",
-    "admin",
-]
+ApprovalLevel = Literal["manager", "admin"]
 
 ApprovalStatus = Literal[
     "pending",
@@ -57,3 +55,5 @@ class ApprovalHistoryResponse(BaseModel):
     action: ApprovalAction
     comment: str | None
     created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

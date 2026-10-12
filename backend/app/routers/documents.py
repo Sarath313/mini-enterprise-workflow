@@ -1,3 +1,4 @@
+
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,10 +22,7 @@ from app.schemas.document import DocumentResponse
 from app.utils.audit import create_audit_log
 
 
-router = APIRouter(
-    prefix="/documents",
-    tags=["Documents"],
-)
+router = APIRouter(prefix="/documents", tags=["Documents"])
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +32,7 @@ router = APIRouter(
 UPLOAD_DIR = Path(__file__).resolve().parents[2] / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+UPLOAD_ROOT = UPLOAD_DIR.resolve()
 
 ALLOWED_EXTENSIONS = {
     ".pdf",
@@ -48,7 +47,6 @@ ALLOWED_EXTENSIONS = {
     ".jpeg",
 }
 
-
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
@@ -56,23 +54,12 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 # Task access control
 # ---------------------------------------------------------------------------
 
-def can_access_task(
-    task: Task,
-    current_user: User,
-) -> bool:
+def can_access_task(task: Task, current_user: User) -> bool:
     """
-    Check whether the current user can access a task.
-
-    Admin:
-        Can access all tasks.
-
-    Manager:
-        Can access tasks they created or tasks assigned to them.
-
-    Employee:
-        Can access tasks assigned to them.
+    Admin: all tasks.
+    Manager: tasks they created or tasks assigned to them.
+    Employee: tasks assigned to them.
     """
-
     if current_user.role == "admin":
         return True
 
@@ -95,18 +82,10 @@ def can_access_document(
     db: Session,
 ) -> bool:
     """
-    Check whether the current user can access a document.
-
-    Admin:
-        Can access all documents.
-
-    Uploader:
-        Can access documents they uploaded.
-
-    Task-linked document:
-        Users with access to the linked task can access the document.
+    Admins can access all documents.
+    Uploaders can access their own documents.
+    Other users must have access to the linked task.
     """
-
     if current_user.role == "admin":
         return True
 
@@ -122,10 +101,24 @@ def can_access_document(
         .first()
     )
 
-    if task is None:
-        return False
+    return task is not None and can_access_task(task, current_user)
 
-    return can_access_task(task, current_user)
+
+def get_safe_file_path(document: Document) -> Path | None:
+    """
+    Resolve the stored path and ensure it remains inside UPLOAD_DIR.
+    """
+    if not document.file_path:
+        return None
+
+    candidate = (UPLOAD_DIR.parent / document.file_path).resolve()
+
+    try:
+        candidate.relative_to(UPLOAD_ROOT)
+    except ValueError:
+        return None
+
+    return candidate
 
 
 # ---------------------------------------------------------------------------
@@ -143,23 +136,25 @@ async def upload_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Upload a document.
-
-    The document can optionally be linked to a task.
-    """
-
-    # Validate filename.
-    if not file.filename:
+    if not file.filename or not file.filename.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Filename is required",
         )
 
-    original_filename = Path(file.filename).name
+    # Handle both Unix and Windows path separators in submitted filenames.
+    original_filename = Path(
+        file.filename.replace("\\", "/")
+    ).name.strip()
+
+    if not original_filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid filename",
+        )
+
     extension = Path(original_filename).suffix.lower()
 
-    # Validate file extension.
     if extension not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -169,10 +164,7 @@ async def upload_document(
             ),
         )
 
-    # -----------------------------------------------------------------------
-    # Validate linked task
-    # -----------------------------------------------------------------------
-
+    # Validate access to the linked task.
     if task_id is not None:
         task = (
             db.query(Task)
@@ -192,11 +184,8 @@ async def upload_document(
                 detail="You do not have access to this task",
             )
 
-    # -----------------------------------------------------------------------
-    # Read and validate file size
-    # -----------------------------------------------------------------------
-
-    file_content = await file.read()
+    # Read at most 10 MB plus one byte to detect oversized uploads.
+    file_content = await file.read(MAX_FILE_SIZE + 1)
 
     if not file_content:
         raise HTTPException(
@@ -210,10 +199,7 @@ async def upload_document(
             detail="File size must not exceed 10 MB",
         )
 
-    # -----------------------------------------------------------------------
-    # Determine document version
-    # -----------------------------------------------------------------------
-
+    # Determine the next version for this document name.
     if task_id is not None:
         latest_document = (
             db.query(Document)
@@ -236,23 +222,20 @@ async def upload_document(
             .first()
         )
 
-    if latest_document:
-        next_version = latest_document.version + 1
-    else:
-        next_version = 1
+    next_version = (
+        latest_document.version + 1
+        if latest_document
+        else 1
+    )
 
-    # -----------------------------------------------------------------------
-    # Generate secure filesystem filename
-    # -----------------------------------------------------------------------
-
+    # Use a random stored filename to avoid collisions and path injection.
     stored_filename = f"{uuid4().hex}{extension}"
     stored_path = UPLOAD_DIR / stored_filename
+    committed = False
 
     try:
-        # Save physical file.
         stored_path.write_bytes(file_content)
 
-        # Save document metadata.
         document = Document(
             file_name=original_filename,
             file_path=str(
@@ -267,7 +250,6 @@ async def upload_document(
         db.add(document)
         db.flush()
 
-        # Create immutable audit record.
         create_audit_log(
             db=db,
             user_id=current_user.id,
@@ -276,18 +258,21 @@ async def upload_document(
             entity_id=document.id,
         )
 
-        # Commit document and audit log together.
         db.commit()
+        committed = True
         db.refresh(document)
 
         return document
 
     except Exception:
-        # Remove physical file if database operation fails.
-        if stored_path.exists():
-            stored_path.unlink()
-
         db.rollback()
+
+        # Do not remove the file if its metadata was already committed.
+        if not committed:
+            try:
+                stored_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -296,21 +281,15 @@ async def upload_document(
 
 
 # ---------------------------------------------------------------------------
-# Get / download document
+# Download document
 # ---------------------------------------------------------------------------
 
-@router.get(
-    "/{document_id}",
-)
+@router.get("/{document_id}")
 def get_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Download a document after checking access permissions.
-    """
-
     document = (
         db.query(Document)
         .filter(Document.id == document_id)
@@ -323,25 +302,20 @@ def get_document(
             detail="Document not found",
         )
 
-    if not can_access_document(
-        document,
-        current_user,
-        db,
-    ):
+    if not can_access_document(document, current_user, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this document",
         )
 
-    file_path = UPLOAD_DIR.parent / document.file_path
+    file_path = get_safe_file_path(document)
 
-    if not file_path.exists() or not file_path.is_file():
+    if file_path is None or not file_path.is_file():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document file not found on server",
         )
 
-    # Record successful document access.
     create_audit_log(
         db=db,
         user_id=current_user.id,
@@ -349,7 +323,6 @@ def get_document(
         entity="document",
         entity_id=document.id,
     )
-
     db.commit()
 
     return FileResponse(
@@ -360,7 +333,7 @@ def get_document(
 
 
 # ---------------------------------------------------------------------------
-# Get documents associated with a task
+# List documents associated with a task
 # ---------------------------------------------------------------------------
 
 @router.get(
@@ -372,10 +345,6 @@ def get_task_documents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Return all document versions associated with a task.
-    """
-
     task = (
         db.query(Task)
         .filter(Task.id == task_id)
@@ -404,7 +373,6 @@ def get_task_documents(
         .all()
     )
 
-    # Record that the task's documents were viewed.
     create_audit_log(
         db=db,
         user_id=current_user.id,
@@ -412,7 +380,66 @@ def get_task_documents(
         entity="task",
         entity_id=task_id,
     )
-
     db.commit()
 
     return documents
+
+
+# ---------------------------------------------------------------------------
+# Delete document
+# ---------------------------------------------------------------------------
+
+@router.delete("/{document_id}")
+def delete_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    document = (
+        db.query(Document)
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    if not can_access_document(document, current_user, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to delete this document",
+        )
+
+    file_path = get_safe_file_path(document)
+
+    create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="DOCUMENT_DELETED",
+        entity="document",
+        entity_id=document.id,
+    )
+
+    try:
+        db.delete(document)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete document",
+        )
+
+    # Delete the physical file only after the database commit succeeds.
+    if file_path is not None:
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError:
+            # Metadata and audit record are already deleted/committed.
+            # A leftover physical file can be cleaned up separately.
+            pass
+
+    return {"message": "Document deleted successfully"}

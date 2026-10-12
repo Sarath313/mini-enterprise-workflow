@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -21,36 +22,46 @@ router = APIRouter(
 )
 def get_task_activities(
     task_id: int,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Find the task first.
     task = (
         db.query(Task)
         .filter(Task.id == task_id)
         .first()
     )
 
-    if task is not None:
-        if current_user.role == "admin":
-            pass
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
 
-        elif current_user.role == "manager":
-            if (
-                task.created_by != current_user.id
-                and task.assigned_to != current_user.id
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You do not have access to this task's activities",
-                )
+    # Enforce task access permissions.
+    if current_user.role == "admin":
+        pass
 
-        else:
-            if task.assigned_to != current_user.id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You do not have access to this task's activities",
-                )
+    elif current_user.role == "manager":
+        if (
+            task.created_by != current_user.id
+            and task.assigned_to != current_user.id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this task's activities",
+            )
 
+    else:
+        if task.assigned_to != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this task's activities",
+            )
+
+    # Retrieve activity history with the associated user's email.
     activities = (
         db.query(
             TaskActivity,
@@ -61,7 +72,12 @@ def get_task_activities(
             TaskActivity.user_id == User.id,
         )
         .filter(TaskActivity.task_id == task_id)
-        .order_by(TaskActivity.created_at.asc())
+        .order_by(
+            TaskActivity.created_at.asc(),
+            TaskActivity.id.asc(),
+        )
+        .offset(skip)
+        .limit(limit)
         .all()
     )
 

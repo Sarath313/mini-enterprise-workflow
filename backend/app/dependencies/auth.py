@@ -1,3 +1,4 @@
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -17,7 +18,6 @@ def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -31,14 +31,17 @@ def get_current_user(
             algorithms=[settings.ALGORITHM],
         )
 
-        user_id = payload.get("sub")
+        subject = payload.get("sub")
 
-        if user_id is None:
+        if subject is None:
             raise credentials_exception
 
-        user_id = int(user_id)
+        user_id = int(subject)
 
-    except (JWTError, ValueError):
+        if user_id <= 0:
+            raise credentials_exception
+
+    except (JWTError, ValueError, TypeError):
         raise credentials_exception
 
     user = (
@@ -62,7 +65,6 @@ def get_current_user(
 def require_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:
-
     if current_user.role != UserRole.ADMIN.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -75,7 +77,6 @@ def require_admin(
 def require_manager_or_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:
-
     allowed_roles = {
         UserRole.ADMIN.value,
         UserRole.MANAGER.value,

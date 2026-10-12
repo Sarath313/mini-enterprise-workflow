@@ -1,12 +1,14 @@
-from pydantic import BaseModel, ConfigDict, EmailStr
+
 from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class UserCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=100)
     email: EmailStr
-    password: str
-    role: Literal["admin", "manager", "employee"] = "employee"
+    password: str = Field(min_length=12, max_length=128)
+    role: Literal["employee"] = "employee"
 
 
 class UserResponse(BaseModel):

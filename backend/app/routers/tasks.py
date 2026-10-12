@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,7 @@ from app.schemas.task import (
 )
 from app.utils.activity import create_task_activity
 from app.utils.audit import create_audit_log
+from app.utils.notification import create_notification
 from app.utils.workflow import validate_status_transition
 
 
@@ -81,10 +83,21 @@ def create_task(
             task_id=new_task.id,
             user_id=current_user.id,
             action="assigned",
-            details=f"Task assigned to user ID {new_task.assigned_to}",
+            details=(
+                f"Task assigned to user ID "
+                f"{new_task.assigned_to}"
+            ),
         )
 
-    # Phase 3 audit log
+        create_notification(
+            db=db,
+            user_id=new_task.assigned_to,
+            message=(
+                f"You have been assigned task #{new_task.id}: "
+                f"{new_task.title}."
+            ),
+        )
+
     create_audit_log(
         db=db,
         user_id=current_user.id,
@@ -171,10 +184,6 @@ def get_kanban_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # ---------------------------------------------------------
-    # ROLE-BASED TASK VISIBILITY
-    # ---------------------------------------------------------
-
     if current_user.role == "admin":
         query = db.query(Task)
 
@@ -194,10 +203,6 @@ def get_kanban_tasks(
         .order_by(Task.created_at.desc())
         .all()
     )
-
-    # ---------------------------------------------------------
-    # GROUP TASKS BY STATUS
-    # ---------------------------------------------------------
 
     kanban = {
         "todo": [],
@@ -288,10 +293,7 @@ def update_task(
             detail="Task not found",
         )
 
-    # ---------------------------------------------------------
-    # ROLE-BASED ACCESS CONTROL
-    # ---------------------------------------------------------
-
+    # Role-based access control
     if current_user.role == "admin":
         pass
 
@@ -330,18 +332,11 @@ def update_task(
                 detail="Employees can only update task status",
             )
 
-    # ---------------------------------------------------------
-    # PREPARE UPDATE
-    # ---------------------------------------------------------
-
     update_data = task_data.model_dump(
         exclude_unset=True
     )
 
-    # ---------------------------------------------------------
-    # VALIDATE ASSIGNEE
-    # ---------------------------------------------------------
-
+    # Validate new assignee
     if "assigned_to" in update_data:
         if update_data["assigned_to"] is not None:
             assigned_user = (
@@ -356,37 +351,23 @@ def update_task(
                     detail="Assigned user not found",
                 )
 
-    # ---------------------------------------------------------
-    # STORE OLD VALUES
-    # ---------------------------------------------------------
-
     old_status = task.status
     old_assigned_to = task.assigned_to
 
-    # ---------------------------------------------------------
-    # VALIDATE STATUS TRANSITION
-    # ---------------------------------------------------------
-
+    # Validate status transition
     if "status" in update_data:
         validate_status_transition(
             current_status=old_status,
             new_status=update_data["status"],
         )
 
-    # ---------------------------------------------------------
-    # APPLY UPDATE
-    # ---------------------------------------------------------
-
+    # Apply updates
     for field, value in update_data.items():
         setattr(task, field, value)
 
-    # ---------------------------------------------------------
-    # STATUS ACTIVITY + STATUS HISTORY + AUDIT
-    # ---------------------------------------------------------
-
+    # Status activity, history and audit
     if "status" in update_data:
         if old_status != task.status:
-
             create_task_activity(
                 db=db,
                 task_id=task.id,
@@ -407,7 +388,6 @@ def update_task(
 
             db.add(status_history)
 
-            # Phase 3 audit log
             create_audit_log(
                 db=db,
                 user_id=current_user.id,
@@ -416,16 +396,11 @@ def update_task(
                 entity_id=task.id,
             )
 
-    # ---------------------------------------------------------
-    # ASSIGNMENT ACTIVITY + AUDIT
-    # ---------------------------------------------------------
-
+    # Assignment activity, audit and notification
     if "assigned_to" in update_data:
         if old_assigned_to != task.assigned_to:
-
             if task.assigned_to is None:
                 details = "Task assignment removed"
-
             else:
                 details = (
                     f"Task assigned to user ID "
@@ -440,7 +415,6 @@ def update_task(
                 details=details,
             )
 
-            # Phase 3 audit log
             create_audit_log(
                 db=db,
                 user_id=current_user.id,
@@ -449,10 +423,17 @@ def update_task(
                 entity_id=task.id,
             )
 
-    # ---------------------------------------------------------
-    # OTHER FIELD UPDATE ACTIVITY + AUDIT
-    # ---------------------------------------------------------
+            if task.assigned_to is not None:
+                create_notification(
+                    db=db,
+                    user_id=task.assigned_to,
+                    message=(
+                        f"You have been assigned task #{task.id}: "
+                        f"{task.title}."
+                    ),
+                )
 
+    # Other field update activity and audit
     non_activity_fields = {
         "status",
         "assigned_to",
@@ -476,7 +457,6 @@ def update_task(
             ),
         )
 
-        # Phase 3 audit log
         create_audit_log(
             db=db,
             user_id=current_user.id,
@@ -484,10 +464,6 @@ def update_task(
             entity="task",
             entity_id=task.id,
         )
-
-    # ---------------------------------------------------------
-    # SAVE CHANGES
-    # ---------------------------------------------------------
 
     db.commit()
     db.refresh(task)
@@ -521,10 +497,7 @@ def update_task_status(
             detail="Task not found",
         )
 
-    # ---------------------------------------------------------
-    # ROLE-BASED ACCESS CONTROL
-    # ---------------------------------------------------------
-
+    # Role-based access control
     if current_user.role == "admin":
         pass
 
@@ -545,38 +518,18 @@ def update_task_status(
                 detail="You can only update tasks assigned to you",
             )
 
-    # ---------------------------------------------------------
-    # STORE OLD AND NEW STATUS
-    # ---------------------------------------------------------
-
     old_status = task.status
     new_status = status_data.status
-
-    # ---------------------------------------------------------
-    # VALIDATE STATUS TRANSITION
-    # ---------------------------------------------------------
 
     validate_status_transition(
         current_status=old_status,
         new_status=new_status,
     )
 
-    # ---------------------------------------------------------
-    # NO CHANGE
-    # ---------------------------------------------------------
-
     if old_status == new_status:
         return task
 
-    # ---------------------------------------------------------
-    # UPDATE STATUS
-    # ---------------------------------------------------------
-
     task.status = new_status
-
-    # ---------------------------------------------------------
-    # GENERAL ACTIVITY LOG
-    # ---------------------------------------------------------
 
     create_task_activity(
         db=db,
@@ -589,10 +542,6 @@ def update_task_status(
         ),
     )
 
-    # ---------------------------------------------------------
-    # STATUS HISTORY
-    # ---------------------------------------------------------
-
     status_history = TaskStatusHistory(
         task_id=task.id,
         from_status=old_status,
@@ -602,10 +551,6 @@ def update_task_status(
 
     db.add(status_history)
 
-    # ---------------------------------------------------------
-    # PHASE 3 AUDIT LOG
-    # ---------------------------------------------------------
-
     create_audit_log(
         db=db,
         user_id=current_user.id,
@@ -613,10 +558,6 @@ def update_task_status(
         entity="task",
         entity_id=task.id,
     )
-
-    # ---------------------------------------------------------
-    # SAVE CHANGES
-    # ---------------------------------------------------------
 
     db.commit()
     db.refresh(task)
@@ -649,10 +590,7 @@ def delete_task(
             detail="Task not found",
         )
 
-    # ---------------------------------------------------------
-    # ROLE-BASED ACCESS CONTROL
-    # ---------------------------------------------------------
-
+    # Role-based access control
     if current_user.role == "admin":
         pass
 
@@ -672,10 +610,6 @@ def delete_task(
             detail="Employees cannot delete tasks",
         )
 
-    # ---------------------------------------------------------
-    # DELETE ACTIVITY
-    # ---------------------------------------------------------
-
     create_task_activity(
         db=db,
         task_id=task.id,
@@ -683,10 +617,6 @@ def delete_task(
         action="deleted",
         details=f"Task '{task.title}' was deleted",
     )
-
-    # ---------------------------------------------------------
-    # PHASE 3 AUDIT LOG
-    # ---------------------------------------------------------
 
     create_audit_log(
         db=db,
@@ -729,10 +659,7 @@ def assign_task(
             detail="Task not found",
         )
 
-    # ---------------------------------------------------------
-    # MANAGER PERMISSION
-    # ---------------------------------------------------------
-
+    # Managers can only assign tasks they created
     if current_user.role == "manager":
         if task.created_by != current_user.id:
             raise HTTPException(
@@ -740,10 +667,7 @@ def assign_task(
                 detail="Managers can only assign tasks they created",
             )
 
-    # ---------------------------------------------------------
-    # VALIDATE ASSIGNEE
-    # ---------------------------------------------------------
-
+    # Validate assignee
     assigned_user = (
         db.query(User)
         .filter(User.id == assignment.assigned_to)
@@ -756,18 +680,11 @@ def assign_task(
             detail="Assigned user not found",
         )
 
-    # ---------------------------------------------------------
-    # UPDATE ASSIGNMENT
-    # ---------------------------------------------------------
-
     old_assigned_to = task.assigned_to
 
     task.assigned_to = assigned_user.id
 
-    # ---------------------------------------------------------
-    # ASSIGNMENT ACTIVITY + AUDIT
-    # ---------------------------------------------------------
-
+    # Assignment activity, audit and notification
     if old_assigned_to != task.assigned_to:
         create_task_activity(
             db=db,
@@ -781,13 +698,21 @@ def assign_task(
             ),
         )
 
-        # Phase 3 audit log
         create_audit_log(
             db=db,
             user_id=current_user.id,
             action="TASK_ASSIGNED",
             entity="task",
             entity_id=task.id,
+        )
+
+        create_notification(
+            db=db,
+            user_id=task.assigned_to,
+            message=(
+                f"You have been assigned task #{task.id}: "
+                f"{task.title}."
+            ),
         )
 
     db.commit()

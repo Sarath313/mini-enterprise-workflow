@@ -10,3 +10,5 @@ from app.models.audit_log import AuditLog
 from app.models.notification import Notification
 
 from app.models.refresh_token import RefreshToken
+
+from app.models.password_reset_token import PasswordResetToken

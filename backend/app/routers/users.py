@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -16,16 +17,37 @@ router = APIRouter(
 )
 
 
+# =========================================================
+# GET USERS (ADMIN ONLY)
+# =========================================================
+
 @router.get(
     "/",
     response_model=list[UserResponse],
 )
 def get_users(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    return db.query(User).all()
+    """
+    Return a paginated list of users.
+    Only administrators can access this endpoint.
+    """
 
+    return (
+        db.query(User)
+        .order_by(User.id.asc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+# =========================================================
+# GET USER BY ID
+# =========================================================
 
 @router.get(
     "/{user_id}",
@@ -36,6 +58,13 @@ def get_user(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Retrieve a user by ID.
+
+    Any authenticated user can access this endpoint,
+    matching the existing application permissions.
+    """
+
     user = (
         db.query(User)
         .filter(User.id == user_id)

@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -5,6 +6,7 @@ from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models.approval import Approval
 from app.models.approval_history import ApprovalHistory
+from app.models.notification import Notification
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.approval import (
@@ -14,6 +16,7 @@ from app.schemas.approval import (
 )
 from app.utils.activity import create_task_activity
 from app.utils.audit import create_audit_log
+from app.utils.notification import create_notification
 
 
 router = APIRouter(
@@ -23,16 +26,14 @@ router = APIRouter(
 
 
 # =========================================================
-# HELPER — CHECK TASK ACCESS
+# HELPER: CHECK TASK ACCESS
 # =========================================================
 
 def check_task_access(
     task: Task,
     current_user: User,
 ) -> None:
-    """
-    Check whether the current user can access the task.
-    """
+    """Check whether the current user can access the task."""
 
     if current_user.role == "admin":
         return
@@ -46,7 +47,6 @@ def check_task_access(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this task",
             )
-
         return
 
     if task.assigned_to != current_user.id:
@@ -57,15 +57,13 @@ def check_task_access(
 
 
 # =========================================================
-# HELPER — BUILD APPROVAL RESPONSE
+# HELPER: BUILD APPROVAL RESPONSE
 # =========================================================
 
 def build_approval_response(
     approval: Approval,
 ) -> ApprovalResponse:
-    """
-    Convert an Approval model into the API response schema.
-    """
+    """Convert an Approval model into its response schema."""
 
     return ApprovalResponse(
         id=approval.id,
@@ -78,6 +76,31 @@ def build_approval_response(
         created_at=approval.created_at,
         updated_at=approval.updated_at,
     )
+
+
+# =========================================================
+# HELPER: CREATE APPROVAL NOTIFICATIONS
+# =========================================================
+
+def notify_users(
+    db: Session,
+    user_ids: set[int | None],
+    message: str,
+) -> None:
+    """Create notifications for valid, unique user IDs."""
+
+    recipient_ids = {
+        user_id
+        for user_id in user_ids
+        if user_id is not None
+    }
+
+    for user_id in recipient_ids:
+        create_notification(
+            db=db,
+            user_id=user_id,
+            message=message,
+        )
 
 
 # =========================================================
@@ -94,9 +117,7 @@ def submit_for_approval(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Submit a task in review status for manager approval.
-    """
+    """Submit a task in review status for manager approval."""
 
     task = (
         db.query(Task)
@@ -110,10 +131,7 @@ def submit_for_approval(
             detail="Task not found",
         )
 
-    check_task_access(
-        task,
-        current_user,
-    )
+    check_task_access(task, current_user)
 
     if task.status != "review":
         raise HTTPException(
@@ -172,7 +190,6 @@ def submit_for_approval(
         action_by=current_user.id,
         action="submitted",
     )
-
     db.add(history)
 
     create_task_activity(
@@ -186,16 +203,22 @@ def submit_for_approval(
         ),
     )
 
-    # ---------------------------------------------------------
-    # PHASE 3 AUDIT LOG
-    # ---------------------------------------------------------
-
     create_audit_log(
         db=db,
         user_id=current_user.id,
         action="APPROVAL_CREATED",
         entity="approval",
         entity_id=approval.id,
+    )
+
+    # Notify the assigned manager.
+    create_notification(
+        db=db,
+        user_id=manager.id,
+        message=(
+            f"Task #{task.id} '{task.title}' "
+            f"requires your manager approval."
+        ),
     )
 
     db.commit()
@@ -217,9 +240,7 @@ def get_task_approvals(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Get all approval records associated with a task.
-    """
+    """Get all approval records associated with a task."""
 
     task = (
         db.query(Task)
@@ -233,19 +254,12 @@ def get_task_approvals(
             detail="Task not found",
         )
 
-    check_task_access(
-        task,
-        current_user,
-    )
+    check_task_access(task, current_user)
 
     approvals = (
         db.query(Approval)
-        .filter(
-            Approval.task_id == task_id
-        )
-        .order_by(
-            Approval.created_at.asc()
-        )
+        .filter(Approval.task_id == task_id)
+        .order_by(Approval.created_at.asc())
         .all()
     )
 
@@ -268,9 +282,7 @@ def get_approval_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Get the complete approval audit history for a task.
-    """
+    """Get the approval history for a task."""
 
     task = (
         db.query(Task)
@@ -284,19 +296,12 @@ def get_approval_history(
             detail="Task not found",
         )
 
-    check_task_access(
-        task,
-        current_user,
-    )
+    check_task_access(task, current_user)
 
     history = (
         db.query(ApprovalHistory)
-        .filter(
-            ApprovalHistory.task_id == task_id
-        )
-        .order_by(
-            ApprovalHistory.created_at.asc()
-        )
+        .filter(ApprovalHistory.task_id == task_id)
+        .order_by(ApprovalHistory.created_at.asc())
         .all()
     )
 
@@ -318,9 +323,7 @@ def process_approval(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Approve, reject, or hold an approval.
-    """
+    """Approve, reject, or hold an approval."""
 
     task = (
         db.query(Task)
@@ -349,46 +352,28 @@ def process_approval(
             detail="Approval not found",
         )
 
-    # ---------------------------------------------------------
-    # ROLE CHECK
-    # ---------------------------------------------------------
-
-    if current_user.role not in {
-        "manager",
-        "admin",
-    }:
+    # Role check
+    if current_user.role not in {"manager", "admin"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Only managers and admins "
-                "can process approvals"
-            ),
+            detail="Only managers and admins can process approvals",
         )
 
-    # ---------------------------------------------------------
-    # APPROVER CHECK
-    # ---------------------------------------------------------
-
+    # Assigned approver check
     if approval.approver_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not the assigned approver",
         )
 
-    # ---------------------------------------------------------
-    # APPROVAL LEVEL CHECK
-    # ---------------------------------------------------------
-
+    # Approval level check
     if (
         approval.level == "manager"
         and current_user.role != "manager"
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Only a manager can process "
-                "manager-level approval"
-            ),
+            detail="Only a manager can process manager-level approval",
         )
 
     if (
@@ -397,16 +382,10 @@ def process_approval(
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Only an admin can process "
-                "admin-level approval"
-            ),
+            detail="Only an admin can process admin-level approval",
         )
 
-    # ---------------------------------------------------------
-    # STATUS CHECK
-    # ---------------------------------------------------------
-
+    # Prevent processing an approval twice.
     if approval.status != "pending":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -416,16 +395,10 @@ def process_approval(
     if approval_data.action == "submitted":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Submitted is not a valid "
-                "approval decision"
-            ),
+            detail="Submitted is not a valid approval decision",
         )
 
-    # ---------------------------------------------------------
-    # REJECTION COMMENT VALIDATION
-    # ---------------------------------------------------------
-
+    # Rejection requires a comment.
     if approval_data.action == "rejected":
         if (
             not approval_data.comment
@@ -433,16 +406,10 @@ def process_approval(
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "A comment is required "
-                    "when rejecting an approval"
-                ),
+                detail="A comment is required when rejecting an approval",
             )
 
-    # ---------------------------------------------------------
-    # UPDATE APPROVAL
-    # ---------------------------------------------------------
-
+    # Update approval record.
     approval.status = approval_data.action
     approval.comment = approval_data.comment
 
@@ -453,7 +420,6 @@ def process_approval(
         action=approval_data.action,
         comment=approval_data.comment,
     )
-
     db.add(history)
 
     create_task_activity(
@@ -466,10 +432,6 @@ def process_approval(
             f"{approval_data.action}."
         ),
     )
-
-    # ---------------------------------------------------------
-    # PHASE 3 AUDIT LOG — APPROVAL PROCESSED
-    # ---------------------------------------------------------
 
     create_audit_log(
         db=db,
@@ -493,8 +455,8 @@ def process_approval(
             user_id=current_user.id,
             action="approval_rejected",
             details=(
-                f"{approval.level.title()} approval "
-                f"rejected. Task returned to in_progress."
+                f"{approval.level.title()} approval rejected. "
+                "Task returned to in_progress."
             ),
         )
 
@@ -522,7 +484,7 @@ def process_approval(
             action="approval_on_hold",
             details=(
                 f"{approval.level.title()} approval "
-                f"placed on hold."
+                "placed on hold."
             ),
         )
 
@@ -536,7 +498,7 @@ def process_approval(
             )
 
     # ---------------------------------------------------------
-    # MANAGER APPROVED → ESCALATE TO ADMIN
+    # MANAGER APPROVED: ESCALATE TO ADMIN
     # ---------------------------------------------------------
 
     elif (
@@ -552,13 +514,9 @@ def process_approval(
 
         if not admin:
             db.rollback()
-
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "No admin is available "
-                    "for final approval"
-                ),
+                detail="No admin is available for final approval",
             )
 
         admin_approval = Approval(
@@ -578,7 +536,6 @@ def process_approval(
             action_by=current_user.id,
             action="submitted",
         )
-
         db.add(admin_history)
 
         create_task_activity(
@@ -593,10 +550,6 @@ def process_approval(
             ),
         )
 
-        # -----------------------------------------------------
-        # PHASE 3 AUDIT LOG — ESCALATION
-        # -----------------------------------------------------
-
         create_audit_log(
             db=db,
             user_id=current_user.id,
@@ -605,8 +558,7 @@ def process_approval(
             entity_id=admin_approval.id,
         )
 
-        # Task remains in review while waiting
-        # for final admin approval.
+        # Keep task in review until final approval.
         old_status = task.status
         task.status = "review"
 
@@ -619,8 +571,18 @@ def process_approval(
                 entity_id=task.id,
             )
 
+        # Notify the admin assigned to final approval.
+        create_notification(
+            db=db,
+            user_id=admin.id,
+            message=(
+                f"Task #{task.id} '{task.title}' "
+                "requires your final admin approval."
+            ),
+        )
+
     # ---------------------------------------------------------
-    # ADMIN APPROVED → COMPLETE TASK
+    # ADMIN APPROVED: COMPLETE TASK
     # ---------------------------------------------------------
 
     elif (
@@ -649,6 +611,26 @@ def process_approval(
                 entity="task",
                 entity_id=task.id,
             )
+
+    # ---------------------------------------------------------
+    # NOTIFY TASK PARTICIPANTS ABOUT THE DECISION
+    # ---------------------------------------------------------
+
+    decision_message = (
+        f"The {approval.level} approval for task "
+        f"#{task.id} '{task.title}' was "
+        f"{approval_data.action} by {current_user.email}."
+    )
+
+    notify_users(
+        db=db,
+        user_ids={
+            approval.requested_by,
+            task.created_by,
+            task.assigned_to,
+        } - {current_user.id},
+        message=decision_message,
+    )
 
     # ---------------------------------------------------------
     # COMMIT
