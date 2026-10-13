@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -63,3 +63,12 @@ class Document(Base):
         "Task",
         foreign_keys=[task_id],
     )
+
+
+Index(
+    "ix_documents_task_file_version",
+    Document.task_id,
+    Document.file_name,
+    Document.version.desc(),
+    Document.id.asc(),
+)

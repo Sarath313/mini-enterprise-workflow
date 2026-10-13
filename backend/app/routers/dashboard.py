@@ -5,6 +5,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
+from app.core.dashboard_cache import (
+    get_cached_dashboard,
+    set_cached_dashboard,
+)
 from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models.task import Task
@@ -29,6 +33,13 @@ def get_dashboard(
     """
     Return task statistics for tasks the current user can access.
     """
+
+    cached_response = get_cached_dashboard(
+        current_user.id,
+        current_user.role,
+    )
+    if cached_response is not None:
+        return cached_response
 
     # ---------------------------------------------------------
     # ROLE-BASED TASK VISIBILITY
@@ -114,7 +125,7 @@ def get_dashboard(
     # BUILD RESPONSE
     # ---------------------------------------------------------
 
-    return DashboardResponse(
+    response = DashboardResponse(
         total_tasks=statistics.total_tasks or 0,
         todo_tasks=statistics.todo_tasks or 0,
         in_progress_tasks=statistics.in_progress_tasks or 0,
@@ -126,3 +137,9 @@ def get_dashboard(
         unassigned_tasks=statistics.unassigned_tasks or 0,
         overdue_tasks=statistics.overdue_tasks or 0,
     )
+    set_cached_dashboard(
+        current_user.id,
+        current_user.role,
+        response,
+    )
+    return response

@@ -1,5 +1,12 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import api from "../api/axios";
+import api, {
+  clearAuthTokens,
+  clearLegacyAuthStorage,
+  logoutSession,
+  refreshAccessToken,
+  setCsrfToken,
+  setAccessToken,
+} from "../api/axios";
 
 const AuthContext = createContext(null);
 
@@ -8,25 +15,30 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("access_token");
+    clearLegacyAuthStorage();
 
-    if (!token) {
-      setLoading(false);
-      return;
-    }
+    const handleExpiredSession = () => {
+      clearAuthTokens();
+      setUser(null);
+    };
+    window.addEventListener("auth:expired", handleExpiredSession);
 
-    api
-      .get("/auth/me")
+    refreshAccessToken()
+      .then(() => api.get("/auth/me"))
       .then((response) => {
         setUser(response.data);
       })
       .catch(() => {
-        localStorage.removeItem("access_token");
+        clearAuthTokens();
         setUser(null);
       })
       .finally(() => {
         setLoading(false);
       });
+
+    return () => {
+      window.removeEventListener("auth:expired", handleExpiredSession);
+    };
   }, []);
 
   const login = async (email, password) => {
@@ -41,20 +53,30 @@ export function AuthProvider({ children }) {
       },
     });
 
-    const token = response.data.access_token;
+    setAccessToken(response.data.access_token);
+    setCsrfToken(response.data.csrf_token);
 
-    localStorage.setItem("access_token", token);
+    try {
+      const userResponse = await api.get("/auth/me");
 
-    const userResponse = await api.get("/auth/me");
+      setUser(userResponse.data);
 
-    setUser(userResponse.data);
-
-    return userResponse.data;
+      return userResponse.data;
+    } catch (error) {
+      clearAuthTokens();
+      throw error;
+    }
   };
 
-  const logout = () => {
-    localStorage.removeItem("access_token");
-    setUser(null);
+  const logout = async () => {
+    try {
+      await logoutSession();
+    } catch {
+      console.warn("Server logout failed; local session was cleared.");
+    } finally {
+      clearAuthTokens();
+      setUser(null);
+    }
   };
 
   const value = {

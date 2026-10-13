@@ -1,6 +1,8 @@
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc
+from sqlalchemy import asc, desc
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -28,6 +30,8 @@ def get_notifications(
     unread_only: bool = Query(default=False),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
+    sort_by: Literal["created_at", "id"] = Query(default="created_at"),
+    sort_order: Literal["asc", "desc"] = Query(default="desc"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -47,9 +51,17 @@ def get_notifications(
             Notification.is_read.is_(False)
         )
 
+    order = desc if sort_order == "desc" else asc
+    sort_column = {
+        "created_at": Notification.created_at,
+        "id": Notification.id,
+    }[sort_by]
+    ordering = [order(sort_column)]
+    if sort_by != "id":
+        ordering.append(order(Notification.id))
     return (
         query
-        .order_by(desc(Notification.created_at))
+        .order_by(*ordering)
         .offset(skip)
         .limit(limit)
         .all()

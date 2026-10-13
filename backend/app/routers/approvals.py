@@ -1,7 +1,11 @@
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import asc, desc
 from sqlalchemy.orm import Session
 
+from app.core.dashboard_cache import invalidate_dashboard_cache
 from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models.approval import Approval
@@ -237,6 +241,18 @@ def submit_for_approval(
 )
 def get_task_approvals(
     task_id: int,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    approval_status: Literal[
+        "pending",
+        "approved",
+        "rejected",
+        "hold",
+    ] | None = Query(default=None, alias="status"),
+    sort_by: Literal["created_at", "status", "level"] = Query(
+        default="created_at"
+    ),
+    sort_order: Literal["asc", "desc"] = Query(default="asc"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -256,10 +272,21 @@ def get_task_approvals(
 
     check_task_access(task, current_user)
 
+    query = db.query(Approval).filter(Approval.task_id == task_id)
+    if approval_status is not None:
+        query = query.filter(Approval.status == approval_status)
+
+    order = desc if sort_order == "desc" else asc
+    sort_column = {
+        "created_at": Approval.created_at,
+        "status": Approval.status,
+        "level": Approval.level,
+    }[sort_by]
     approvals = (
-        db.query(Approval)
-        .filter(Approval.task_id == task_id)
-        .order_by(Approval.created_at.asc())
+        query
+        .order_by(order(sort_column), order(Approval.id))
+        .offset(skip)
+        .limit(limit)
         .all()
     )
 
@@ -279,6 +306,15 @@ def get_task_approvals(
 )
 def get_approval_history(
     task_id: int,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    action: Literal["submitted", "approved", "rejected", "hold"] | None = Query(
+        default=None
+    ),
+    sort_by: Literal["created_at", "action"] = Query(
+        default="created_at"
+    ),
+    sort_order: Literal["asc", "desc"] = Query(default="asc"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -298,10 +334,25 @@ def get_approval_history(
 
     check_task_access(task, current_user)
 
+    query = db.query(ApprovalHistory).filter(
+        ApprovalHistory.task_id == task_id
+    )
+    if action is not None:
+        query = query.filter(ApprovalHistory.action == action)
+
+    order = desc if sort_order == "desc" else asc
+    sort_column = {
+        "created_at": ApprovalHistory.created_at,
+        "action": ApprovalHistory.action,
+    }[sort_by]
     history = (
-        db.query(ApprovalHistory)
-        .filter(ApprovalHistory.task_id == task_id)
-        .order_by(ApprovalHistory.created_at.asc())
+        query
+        .order_by(
+            order(sort_column),
+            order(ApprovalHistory.id),
+        )
+        .offset(skip)
+        .limit(limit)
         .all()
     )
 
@@ -637,6 +688,7 @@ def process_approval(
     # ---------------------------------------------------------
 
     db.commit()
+    invalidate_dashboard_cache()
     db.refresh(approval)
 
     return build_approval_response(approval)

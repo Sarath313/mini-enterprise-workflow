@@ -1,5 +1,6 @@
 
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import (
@@ -7,10 +8,12 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
 from fastapi.responses import FileResponse
+from sqlalchemy import asc, desc
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -342,6 +345,17 @@ def get_document(
 )
 def get_task_documents(
     task_id: int,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    file_name: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=255,
+    ),
+    sort_by: Literal["file_name", "version", "created_at"] = Query(
+        default="file_name"
+    ),
+    sort_order: Literal["asc", "desc"] = Query(default="asc"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -363,13 +377,29 @@ def get_task_documents(
             detail="You do not have access to this task",
         )
 
-    documents = (
-        db.query(Document)
-        .filter(Document.task_id == task_id)
-        .order_by(
-            Document.file_name.asc(),
-            Document.version.desc(),
+    query = db.query(Document).filter(Document.task_id == task_id)
+    if file_name is not None:
+        query = query.filter(
+            Document.file_name.ilike(f"%{file_name.strip()}%")
         )
+
+    order = desc if sort_order == "desc" else asc
+    sort_column = {
+        "file_name": Document.file_name,
+        "version": Document.version,
+        "created_at": Document.created_at,
+    }[sort_by]
+    ordering = [order(sort_column)]
+    if sort_by == "file_name":
+        ordering.append(Document.version.desc())
+    elif sort_by == "version":
+        ordering.append(Document.file_name.asc())
+    ordering.append(order(Document.id))
+    documents = (
+        query
+        .order_by(*ordering)
+        .offset(skip)
+        .limit(limit)
         .all()
     )
 

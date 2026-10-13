@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -43,3 +43,11 @@ class Notification(Base):
         "User",
         foreign_keys=[user_id],
     )
+
+
+Index(
+    "ix_notifications_user_recent",
+    Notification.user_id,
+    Notification.created_at.desc(),
+    Notification.id.desc(),
+)

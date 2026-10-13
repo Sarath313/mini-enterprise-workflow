@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc
+from sqlalchemy import asc, desc
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -40,6 +41,10 @@ def get_audit_logs(
     user_id: int | None = Query(default=None, ge=1),
     start_date: datetime | None = Query(default=None),
     end_date: datetime | None = Query(default=None),
+    sort_by: Literal["timestamp", "action", "entity"] = Query(
+        default="timestamp"
+    ),
+    sort_order: Literal["asc", "desc"] = Query(default="desc"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -87,12 +92,15 @@ def get_audit_logs(
     if end_date is not None:
         query = query.filter(AuditLog.timestamp <= end_date)
 
+    sort_column = {
+        "timestamp": AuditLog.timestamp,
+        "action": AuditLog.action,
+        "entity": AuditLog.entity,
+    }[sort_by]
+    order = desc if sort_order == "desc" else asc
     audit_logs = (
         query
-        .order_by(
-            desc(AuditLog.timestamp),
-            desc(AuditLog.id),
-        )
+        .order_by(order(sort_column), order(AuditLog.id))
         .offset(skip)
         .limit(limit)
         .all()

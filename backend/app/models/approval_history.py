@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -69,3 +69,11 @@ class ApprovalHistory(Base):
         "User",
         foreign_keys=[action_by],
     )
+
+
+Index(
+    "ix_approval_history_task_created",
+    ApprovalHistory.task_id,
+    ApprovalHistory.created_at,
+    ApprovalHistory.id,
+)

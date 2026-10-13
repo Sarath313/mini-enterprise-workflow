@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -74,3 +74,22 @@ class Task(Base):
         "User",
         foreign_keys=[created_by],
     )
+
+
+Index(
+    "ix_tasks_assigned_recent",
+    Task.assigned_to,
+    Task.created_at.desc(),
+    Task.id.desc(),
+)
+Index(
+    "ix_tasks_created_by_recent",
+    Task.created_by,
+    Task.created_at.desc(),
+    Task.id.desc(),
+)
+Index(
+    "ix_tasks_created_recent",
+    Task.created_at.desc(),
+    Task.id.desc(),
+)

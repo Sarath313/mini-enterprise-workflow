@@ -1,7 +1,11 @@
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import asc, desc
 from sqlalchemy.orm import Session
 
+from app.core.dashboard_cache import invalidate_dashboard_cache
 from app.database import get_db
 from app.dependencies.auth import (
     get_current_user,
@@ -15,6 +19,8 @@ from app.schemas.task import (
     TaskAssign,
     TaskCreate,
     TaskResponse,
+    TaskPriority,
+    TaskStatus,
     TaskStatusUpdate,
     TaskUpdate,
 )
@@ -107,6 +113,7 @@ def create_task(
     )
 
     db.commit()
+    invalidate_dashboard_cache()
     db.refresh(new_task)
 
     return new_task
@@ -121,23 +128,22 @@ def create_task(
     response_model=list[TaskResponse],
 )
 def get_tasks(
-    status: str | None = None,
-    priority: str | None = None,
-    assigned_to: int | None = None,
-    skip: int = 0,
-    limit: int = 20,
+    status: TaskStatus | None = Query(default=None),
+    priority: TaskPriority | None = Query(default=None),
+    assigned_to: int | None = Query(default=None, ge=1),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    sort_by: Literal[
+        "created_at",
+        "due_date",
+        "title",
+        "status",
+        "priority",
+    ] = Query(default="created_at"),
+    sort_order: Literal["asc", "desc"] = Query(default="desc"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if skip < 0:
-        skip = 0
-
-    if limit < 1:
-        limit = 20
-
-    if limit > 100:
-        limit = 100
-
     if current_user.role == "admin":
         query = db.query(Task)
 
@@ -161,9 +167,17 @@ def get_tasks(
     if assigned_to is not None:
         query = query.filter(Task.assigned_to == assigned_to)
 
+    sort_column = {
+        "created_at": Task.created_at,
+        "due_date": Task.due_date,
+        "title": Task.title,
+        "status": Task.status,
+        "priority": Task.priority,
+    }[sort_by]
+    order = desc if sort_order == "desc" else asc
     tasks = (
         query
-        .order_by(Task.created_at.desc())
+        .order_by(order(sort_column), order(Task.id))
         .offset(skip)
         .limit(limit)
         .all()
@@ -466,6 +480,7 @@ def update_task(
         )
 
     db.commit()
+    invalidate_dashboard_cache()
     db.refresh(task)
 
     return task
@@ -560,6 +575,7 @@ def update_task_status(
     )
 
     db.commit()
+    invalidate_dashboard_cache()
     db.refresh(task)
 
     return task
@@ -631,6 +647,7 @@ def delete_task(
     db.delete(task)
 
     db.commit()
+    invalidate_dashboard_cache()
 
 
 # =========================================================
@@ -716,6 +733,7 @@ def assign_task(
         )
 
     db.commit()
+    invalidate_dashboard_cache()
     db.refresh(task)
 
     return task

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -49,3 +49,10 @@ class AuditLog(Base):
         "User",
         foreign_keys=[user_id],
     )
+
+
+Index(
+    "ix_audit_logs_timestamp_id",
+    AuditLog.timestamp.desc(),
+    AuditLog.id.desc(),
+)

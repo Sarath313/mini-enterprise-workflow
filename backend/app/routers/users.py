@@ -1,5 +1,8 @@
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import asc, desc, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -28,6 +31,15 @@ router = APIRouter(
 def get_users(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
+    role: Literal["admin", "manager", "employee"] | None = Query(
+        default=None
+    ),
+    is_active: bool | None = Query(default=None),
+    search: str | None = Query(default=None, min_length=1, max_length=100),
+    sort_by: Literal["id", "name", "email", "created_at"] = Query(
+        default="id"
+    ),
+    sort_order: Literal["asc", "desc"] = Query(default="asc"),
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -36,9 +48,34 @@ def get_users(
     Only administrators can access this endpoint.
     """
 
+    query = db.query(User)
+    if role is not None:
+        query = query.filter(User.role == role)
+    if is_active is not None:
+        query = query.filter(User.is_active.is_(is_active))
+    if search is not None:
+        search_term = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                User.name.ilike(search_term),
+                User.email.ilike(search_term),
+            )
+        )
+
+    sort_column = {
+        "id": User.id,
+        "name": User.name,
+        "email": User.email,
+        "created_at": User.created_at,
+    }[sort_by]
+    order = desc if sort_order == "desc" else asc
+    ordering = [order(sort_column)]
+    if sort_by != "id":
+        ordering.append(order(User.id))
+
     return (
-        db.query(User)
-        .order_by(User.id.asc())
+        query
+        .order_by(*ordering)
         .offset(skip)
         .limit(limit)
         .all()

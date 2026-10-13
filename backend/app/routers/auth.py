@@ -1,7 +1,11 @@
 
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
+import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
@@ -11,6 +15,7 @@ from app.core.password_reset import (
     hash_password_reset_token,
 )
 from app.core.password_reset_delivery import deliver_password_reset_token
+from app.core.rate_limit import rate_limit
 from app.core.refresh_tokens import (
     generate_refresh_token,
     hash_refresh_token,
@@ -31,8 +36,117 @@ from app.schemas.user import Token, UserCreate, UserResponse
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-class RefreshRequest(BaseModel):
-    refresh_token: str = Field(min_length=1, max_length=256)
+REFRESH_COOKIE_NAME = "refresh_token"
+CSRF_COOKIE_NAME = "csrf_token"
+CSRF_HEADER_NAME = "X-CSRF-Token"
+
+
+def _csrf_token_signature(nonce: str) -> str:
+    return hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        nonce.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _create_csrf_token() -> str:
+    nonce = secrets.token_urlsafe(32)
+    return f"{nonce}.{_csrf_token_signature(nonce)}"
+
+
+def _valid_csrf_token(cookie_token: str | None, header_token: str | None) -> bool:
+    if not cookie_token or not header_token or not hmac.compare_digest(
+        cookie_token, header_token
+    ):
+        return False
+    try:
+        nonce, signature = cookie_token.rsplit(".", 1)
+    except ValueError:
+        return False
+    return bool(nonce) and hmac.compare_digest(
+        signature, _csrf_token_signature(nonce)
+    )
+
+
+def _set_auth_cookies(response: Response, refresh_token: str) -> str:
+    cookie_options = {
+        "max_age": settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        "path": "/auth",
+        "secure": settings.REFRESH_COOKIE_SECURE,
+        "samesite": settings.REFRESH_COOKIE_SAMESITE,
+    }
+    response.set_cookie(
+        REFRESH_COOKIE_NAME,
+        refresh_token,
+        httponly=True,
+        **cookie_options,
+    )
+    csrf_token = _create_csrf_token()
+    _set_csrf_cookie(response, csrf_token)
+    return csrf_token
+
+
+def _set_csrf_cookie(response: Response, csrf_token: str) -> None:
+    cookie_options = {
+        "max_age": settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        "path": "/",
+        "secure": settings.REFRESH_COOKIE_SECURE,
+        "samesite": settings.REFRESH_COOKIE_SAMESITE,
+    }
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        csrf_token,
+        httponly=True,
+        **cookie_options,
+    )
+
+
+def _clear_auth_cookies(response: Response) -> None:
+    cookie_options = {
+        "path": "/auth",
+        "secure": settings.REFRESH_COOKIE_SECURE,
+        "samesite": settings.REFRESH_COOKIE_SAMESITE,
+    }
+    response.delete_cookie(
+        REFRESH_COOKIE_NAME,
+        httponly=True,
+        **cookie_options,
+    )
+    response.delete_cookie(
+        CSRF_COOKIE_NAME,
+        httponly=True,
+        **{**cookie_options, "path": "/"},
+    )
+
+
+def _require_csrf(request: Request, header_token: str | None) -> None:
+    if not _valid_csrf_token(
+        request.cookies.get(CSRF_COOKIE_NAME),
+        header_token,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSRF validation failed",
+        )
+
+
+def _invalid_refresh_response(response: Response) -> JSONResponse:
+    _clear_auth_cookies(response)
+    error_response = JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": "Invalid or expired refresh token"},
+    )
+    error_response.raw_headers.extend(
+        header for header in response.raw_headers if header[0] == b"set-cookie"
+    )
+    return error_response
+
+
+@router.get("/csrf")
+def get_csrf_token(response: Response):
+    csrf_token = _create_csrf_token()
+    _set_csrf_cookie(response, csrf_token)
+    return {"csrf_token": csrf_token}
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -63,7 +177,6 @@ def create_refresh_token_record(db: Session, user_id: int) -> str:
 def create_user_access_token(user: User) -> str:
     return create_access_token(
         data={"sub": str(user.id), "role": user.role},
-        expires_delta=timedelta(minutes=60),
     )
 
 
@@ -112,8 +225,16 @@ def register(
 
 @router.post("/login", response_model=Token)
 def login(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
+    _: None = Depends(
+        rate_limit(
+            "login",
+            lambda: settings.LOGIN_RATE_LIMIT_REQUESTS,
+            lambda: settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+        )
+    ),
 ):
     email = form_data.username.strip().lower()
 
@@ -147,19 +268,41 @@ def login(
         db.rollback()
         raise
 
+    csrf_token = _set_auth_cookies(response, refresh_token)
+
     return {
         "access_token": access_token,
-        "refresh_token": refresh_token,
+        "csrf_token": csrf_token,
         "token_type": "bearer",
     }
 
 
 @router.post("/refresh", response_model=Token)
 def refresh(
-    request: RefreshRequest,
+    request: Request,
+    response: Response,
+    csrf_token: str | None = Header(default=None, alias=CSRF_HEADER_NAME),
     db: Session = Depends(get_db),
 ):
-    token_hash = hash_refresh_token(request.refresh_token)
+    raw_refresh_token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if not raw_refresh_token:
+        return _invalid_refresh_response(response)
+    _require_csrf(request, csrf_token)
+    try:
+        rotated = rotate_refresh_token(raw_refresh_token, db)
+    except HTTPException:
+        return _invalid_refresh_response(response)
+
+    csrf_token = _set_auth_cookies(response, rotated["refresh_token"])
+    return {
+        "access_token": rotated["access_token"],
+        "csrf_token": csrf_token,
+        "token_type": "bearer",
+    }
+
+
+def rotate_refresh_token(raw_refresh_token: str, db: Session) -> dict[str, str]:
+    token_hash = hash_refresh_token(raw_refresh_token)
 
     record = (
         db.query(RefreshToken)
@@ -215,16 +358,29 @@ def refresh(
     return {
         "access_token": access_token,
         "refresh_token": new_refresh_token,
-        "token_type": "bearer",
     }
 
 
 @router.post("/logout")
 def logout(
-    request: RefreshRequest,
+    request: Request,
+    response: Response,
+    csrf_token: str | None = Header(default=None, alias=CSRF_HEADER_NAME),
     db: Session = Depends(get_db),
 ):
-    token_hash = hash_refresh_token(request.refresh_token)
+    _require_csrf(request, csrf_token)
+    raw_refresh_token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if not raw_refresh_token:
+        _clear_auth_cookies(response)
+        return {"message": "Logged out"}
+
+    revoke_refresh_token(raw_refresh_token, db)
+    _clear_auth_cookies(response)
+    return {"message": "Logged out"}
+
+
+def revoke_refresh_token(raw_refresh_token: str, db: Session) -> None:
+    token_hash = hash_refresh_token(raw_refresh_token)
 
     record = (
         db.query(RefreshToken)
@@ -241,13 +397,18 @@ def logout(
             db.rollback()
             raise
 
-    return {"message": "Logged out"}
-
 
 @router.post("/forgot-password")
 def forgot_password(
     request: ForgotPasswordRequest,
     db: Session = Depends(get_db),
+    _: None = Depends(
+        rate_limit(
+            "forgot-password",
+            lambda: settings.FORGOT_PASSWORD_RATE_LIMIT_REQUESTS,
+            lambda: settings.FORGOT_PASSWORD_RATE_LIMIT_WINDOW_SECONDS,
+        )
+    ),
 ):
     generic_response = {
         "message": (
@@ -306,6 +467,13 @@ def forgot_password(
 def reset_password(
     request: ResetPasswordRequest,
     db: Session = Depends(get_db),
+    _: None = Depends(
+        rate_limit(
+            "reset-password",
+            lambda: settings.RESET_PASSWORD_RATE_LIMIT_REQUESTS,
+            lambda: settings.RESET_PASSWORD_RATE_LIMIT_WINDOW_SECONDS,
+        )
+    ),
 ):
     now = datetime.now(timezone.utc)
     token_hash = hash_password_reset_token(request.token)
